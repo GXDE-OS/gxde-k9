@@ -64,6 +64,6 @@ find "$SLIMY_DIR" -name "*.slimy" -exec bash -c '{}' \; &
 
 # 保持脚本运行
 while true; do
-    echo "$(date +'%Y-%m-%d %H:%M:%S') - Slimy scripts are being monitored..."
+#    echo "$(date +'%Y-%m-%d %H:%M:%S') - Slimy scripts are being monitored..."
     sleep 5
 done
