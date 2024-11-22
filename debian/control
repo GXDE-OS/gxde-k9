@@ -1,0 +1,16 @@
+Source: gxde-k9
+Section: utils
+Priority: optional
+Maintainer: shenmo <shenmo@spark-app.store>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.5.1
+Homepage: https://gitee.com/GXDE-OS/gxde-k9
+Rules-Requires-Root: no
+#Vcs-Git: https://salsa.debian.org/debian/gxde-k9.git
+#Vcs-Browser: https://salsa.debian.org/debian/gxde-k9
+
+Package: gxde-k9
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends},bash,screen，find
+Description:  A simple timer runner to pull up services based on screen.
