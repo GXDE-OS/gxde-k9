@@ -1,79 +1,65 @@
-# GXDE K9
+**GXDE K9** 是一个轻量级的脚本监控与定时任务执行工具，支持自动执行 `.slimy` 脚本并根据定时器配置文件的规则触发任务。
 
-K9 Lick Daemon 是一个实现了 watchdog 和 timer 的轻量级服务管理工具，可以自动运行指定目录中的 `.slimy` 脚本和定时器。它支持通过参数指定目录，并提供友好的日志信息。
+K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户态watchdog，如果你因为种种原因无法使用systemd(比如正在容器中使用)，则可用gxde-k9实现一个基本的服务拉起工具/定时任务工具
 
-
----
-
-## 功能 Features
-
-- **自动运行**：监控指定目录中的 `.slimy` 脚本并执行。
-- **动态配置**：支持通过命令行参数设置监控目录。
-- **日志输出**：以时间戳记录操作日志，便于调试。
-- **信号处理**：捕获 `SIGINT` 和 `SIGTERM` 信号，确保子进程安全退出。
-
-- **Auto Execution**: Monitors and executes `.slimy` scripts in the specified directory.
-- **Dynamic Configuration**: Supports setting the monitored directory through command-line arguments.
-- **Logging**: Logs operations with timestamps for easier debugging.
-- **Signal Handling**: Captures `SIGINT` and `SIGTERM` signals to safely terminate child processes.
+https://gitee.com/GXDE-OS/gxde-k9
 
 ---
 
-## 使用方法 Usage
+#### **功能特点**
 
-### 启动脚本 Run the Script
+1. 监控指定目录下的 `.slimy` 脚本，每 5 秒自动执行一次。
+2. 支持 `crontab` 格式的定时任务，通过 `.timer` 文件配置触发条件和执行指令。
+3. 自动检测并清理僵尸锁文件，防止多次运行。
+4. 支持自定义 PID 文件路径，方便灵活部署。
 
-#### 使用默认目录 Use Default Directory
+#### **参数说明**
 
-```bash
-gxde-k9
-```
+| 参数              | 说明                                                                             |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/etc/gxde-k9/slimy/`）。                   |
+| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/etc/gxde-k9/timer/`）。                 |
+| `--pid-file`    | 自定义 PID 文件位置（默认：`/var/run/`或 `$HOME/.config/GXDE/`下的锁文件）。 |
+| `-h`,`--help` | 显示帮助信息并退出。                                                             |
 
-默认监控目录为 /etc/gxde-k9/slimy/
+#### **目录结构**
 
-The default monitored directory is /etc/gxde-k9/slimy/
-
-#### 指定自定义目录 Specify a Custom Directory
- 
-```bash
-gxde-k9 --slimy-dir /home/user/slimy/ --timer-dir /home/user/timer/
-
-
-```
-
-#### 查看帮助 Show Help
-```bash
-gxde-k9 -h
-
+* **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
+* **`timer` 目录**：存放定时器配置文件（`.timer` 文件），每行使用以下格式：
 
 ```
-
-### 目录结构建议 Suggested Directory Structure
-
-```
-/etc/gxde-k9/
-├── slimy/      # 监控目录，存放 .slimy 脚本
-└── timer/      # 存放定时器相关配置
-
+<crontab格式>|<执行指令>
 ```
 
-* slimy/: 存放需要自动运行的 .slimy 脚本
-* timer/: 存放与定时任务相关的配置。
+示例：
 
-### 信号处理 Signal Handling
-
-当脚本接收到 Ctrl+C（SIGINT）或其他终止信号（SIGTERM）时，会自动清理所有子进程。
-
-When the script receives a Ctrl+C (SIGINT) or other termination signals (SIGTERM), it will automatically clean up all child processes.
-
-### 注意事项 Notes
-
-* 确保 .slimy 脚本具有可执行权限： Ensure .slimy scripts are executable:
-
-```bash
-chmod +x /path/to/slimy/script.slimy
+```
+* * * * *|echo "每分钟运行"
+0 12 * * *|bash /path/to/script.sh
 ```
 
-* 如果指定的目录不存在，脚本会提示错误并退出： If the specified directory does not exist, the script will show an error and exit.
+#### **示例**
 
-* 使用日志信息便于排查运行中的问题。 Use log information to troubleshoot runtime issues.
+1. 默认启动：
+   
+   ```
+   gxde-k9
+   ```
+2. 监控自定义目录并指定 PID 文件：
+   
+   ```
+   gxde-k9 --slimy-dir /my/slimy/scripts --pid-file /tmp/mydaemon.pid
+   ```
+3. 检查帮助信息：
+   
+   ```
+   gxde-k9 --help
+   ```
+
+注意事项
+
+```
+确保 .slimy 和 .timer 文件的内容正确且可执行。
+脚本需要运行在 Bash 环境中，且定时任务的 crontab 格式需合法。
+```
+

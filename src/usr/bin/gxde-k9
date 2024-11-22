@@ -4,10 +4,11 @@
 SLIMY_DIR="/etc/gxde-k9/slimy/"
 TIMER_DIR="/etc/gxde-k9/timer/"
 if [[ $EUID -eq 0 ]]; then
-    LOCKFILE="/var/run/gxde-k9-daemon.lock"
+    DEFAULT_LOCKFILE="/var/run/gxde-k9-daemon.lock"
 else
-    LOCKFILE="$HOME/.config/GXDE/gxde-k9-daemon.lock"
+    DEFAULT_LOCKFILE="$HOME/.config/GXDE/gxde-k9-daemon.lock"
 fi
+LOCKFILE="$DEFAULT_LOCKFILE"
 
 # 打印帮助信息
 print_help() {
@@ -17,12 +18,14 @@ Usage: $0 [options]
 Options:
   --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
   --timer-dir <path>   Specify the directory to monitor for .timer files.
+  --pid-file <path>    Specify the location for the PID file.
   -h                   Show this help message and exit.
 
 Description:
   K9 Lick Daemon gen 2 monitors a specified directory for .slimy scripts
   and executes them. It also supports .timer files with crontab-like schedules.
   By default, it monitors $SLIMY_DIR and $TIMER_DIR.
+
 Timer Example:
 # <minute> <hour> <day> <month> <weekday>|<command>
 0 7 * * 1 /home/user/scripts/weekly_task.sh
@@ -76,6 +79,14 @@ while [[ $# -gt 0 ]]; do
             fi
             TIMER_DIR="$1"
             ;;
+        --pid-file)
+            shift
+            if [[ -z "$1" ]]; then
+                echo "Error: --pid-file requires a file path."
+                exit 1
+            fi
+            LOCKFILE="$1"
+            ;;
         -h|--help)
             print_help
             ;;
@@ -119,7 +130,6 @@ run_slimy_scripts() {
 }
 
 # 解析 crontab-like 格式的定时器时间
-
 is_time_matched() {
     local cron_time="$1"
     local minute hour day month weekday
