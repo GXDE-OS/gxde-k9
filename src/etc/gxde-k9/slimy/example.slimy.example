@@ -33,7 +33,7 @@ fi
 # 如果 PID 文件不存在，启动目标进程
 if [[ ! -f "$PID_FILE" ]]; then
     echo "[$PROCESS_NAME] 目标进程未运行，正在启动：$TARGET_PROCESS"
-    "$TARGET_PROCESS" &
+    $TARGET_PROCESS &
     echo $! > "$PID_FILE"
 else
     #echo "[$PROCESS_NAME] 目标进程正在运行，PID 文件路径：$PID_FILE"
