@@ -8,6 +8,8 @@
 # 目标程序路径（需要运行的可执行文件）
 TARGET_PROCESS="/path/to/your/target/program"
 
+# ====== 若无特殊需求，以下请默认 =======
+
 # PID 文件目录（从环境变量 PID_DIR 获取，默认为 /var/run）
 PID_DIR="${PID_DIR:-$HOME/.config/GXDE/gxde-k9/}"
 

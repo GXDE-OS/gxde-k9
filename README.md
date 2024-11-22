@@ -21,13 +21,17 @@ https://gitee.com/GXDE-OS/gxde-k9
 | ----------------- | -------------------------------------------------------------------------------- |
 | `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/etc/gxde-k9/slimy/`）。                   |
 | `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/etc/gxde-k9/timer/`）。                 |
-| `--pid-file`    | 自定义 PID 文件位置（默认： `$HOME/.config/GXDE/`）。 |
+| `--pid-dir`    | 自定义 PID 文件位置（默认： `$HOME/.config/GXDE/gxde-k9/`）。 |
 | `-h`,`--help` | 显示帮助信息并退出。                                                             |
 
 #### **目录结构**
 
 * **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
 * **`timer` 目录**：存放定时器配置文件（`.timer` 文件），每行使用以下格式：
+
+slimy有example,可以非常简单地创建一个[watchdog](src/etc/gxde-k9/slimy/example.slimy.example)
+
+
 
 ```
 <crontab格式>|<执行指令>
@@ -50,7 +54,7 @@ https://gitee.com/GXDE-OS/gxde-k9
 2. 监控自定义目录并指定 PID 文件：
    
    ```
-   gxde-k9 --slimy-dir /my/slimy/scripts --pid-file /tmp/mydaemon.pid
+   gxde-k9 --slimy-dir /my/slimy/scripts --pid-dir /tmp/mydaemon/
    ```
 3. 检查帮助信息：
    
