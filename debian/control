@@ -12,5 +12,5 @@ Rules-Requires-Root: no
 Package: gxde-k9
 Architecture: all
 Multi-Arch: foreign
-Depends: ${misc:Depends},bash,screen，find
+Depends: ${misc:Depends},bash,screen,findutils
 Description:  A simple timer runner to pull up services based on screen.
