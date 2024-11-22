@@ -1,4 +1,4 @@
-# K9 Lick Daemon Gen 2
+# GXDE K9
 
 K9 Lick Daemon 是一个类 `systemd` 的轻量级服务管理工具，可以自动运行指定目录中的 `.slimy` 脚本，并实现服务的动态管理。它支持通过参数指定目录，并提供友好的日志信息。
 
@@ -27,7 +27,7 @@ K9 Lick Daemon is a lightweight service management tool similar to `systemd`. It
 #### 使用默认目录 Use Default Directory
 
 ```bash
-./k9-daemon.sh
+gxde-k9
 ```
 
 默认监控目录为 /etc/gxde-k9/slimy/
@@ -37,14 +37,14 @@ The default monitored directory is /etc/gxde-k9/slimy/
 #### 指定自定义目录 Specify a Custom Directory
  
 ```bash
-./k9-daemon.sh --slimy-dir /path/to/custom/slimy/
+gxde-k9 --slimy-dir /path/to/custom/slimy/
 
 
 ```
 
 #### 查看帮助 Show Help
 ```bash
-./k9-daemon.sh -h
+gxde-k9 -h
 
 
 ```
