@@ -19,8 +19,8 @@ https://gitee.com/GXDE-OS/gxde-k9
 
 | 参数              | 说明                                                                             |
 | ----------------- | -------------------------------------------------------------------------------- |
-| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/etc/gxde-k9/slimy/`）。                   |
-| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/etc/gxde-k9/timer/`）。                 |
+| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/usr/share/gxde-k9/slimy/`）。                   |
+| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/usr/share/gxde-k9/timer/`）。                 |
 | `--pid-dir`    | 自定义 PID 文件位置（默认： `$HOME/.config/GXDE/gxde-k9/`）。 |
 | `-h`,`--help` | 显示帮助信息并退出。                                                             |
 
@@ -29,7 +29,7 @@ https://gitee.com/GXDE-OS/gxde-k9
 * **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
 * **`timer` 目录**：存放定时器配置文件（`.timer` 文件），每行使用以下格式：
 
-slimy有example,可以非常简单地创建一个[watchdog](src/etc/gxde-k9/slimy/example.slimy.example)
+slimy有example,可以非常简单地创建一个[watchdog](src/usr/share/gxde-k9/slimy/example.slimy.example)
 
 
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=GXDE K9
+Name[zh_CN]=GXDE K9
+Comment=GXDE K9 
+Type=Application
+Exec=/usr/bin/gxde-k9
+Icon=deepin-launcher
+Categories=System
+
+# Generated from the DesktopGenerater component of the z-Tools toolkit
