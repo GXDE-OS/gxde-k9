@@ -1,14 +1,12 @@
 #!/bin/bash
 
-# 使用 realpath 获取绝对路径
-SCRIPT_PATH=$(realpath "$0")
-SCRIPT_NAME=$(basename "$SCRIPT_PATH")
-
 # 默认目录
 SLIMY_DIR="/usr/share/gxde-k9/slimy/"
 TIMER_DIR="/usr/share/gxde-k9/timer/"
 PID_DIR="$HOME/.config/GXDE/gxde-k9/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
+
+
 
 # 打印帮助信息
 print_help() {
@@ -18,7 +16,7 @@ Usage: $0 [options]
 Options:
   --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
   --timer-dir <path>   Specify the directory to monitor for .timer files.
-  --pid-dir <path>     Specify the location for the PID DIR.
+  --pid-dir <path>    Specify the location for the PID DIR.
   -h                   Show this help message and exit.
 
 Description:
@@ -34,31 +32,17 @@ EOF
     exit 0
 }
 
-# 防止多次运行，带 PID 和进程路径校验
+# 防止多次运行，带 PID 校验
 check_lockfile() {
     if [[ -f "$LOCKFILE" ]]; then
         existing_pid=$(cat "$LOCKFILE")
         if [[ -n "$existing_pid" && -e "/proc/$existing_pid" ]]; then
-            # 检查进程路径是否匹配
-            process_path=$(readlink -f "/proc/$existing_pid/exe" 2>/dev/null)
-            if [[ "$process_path" == "$SCRIPT_PATH" ]]; then
-                echo "Daemon is already running with PID $existing_pid. Exiting."
-                exit 1
-            else
-                echo "Stale lockfile detected for PID $existing_pid (process path mismatch). Removing lockfile and continuing."
-                rm -f "$LOCKFILE"
-            fi
+            echo "Daemon is already running with PID $existing_pid. Exiting."
+            exit 1
         else
-            echo "Stale lockfile detected for non-existent PID $existing_pid. Removing lockfile and continuing."
+            echo "Stale lockfile detected. Removing lockfile and continuing."
             rm -f "$LOCKFILE"
         fi
-    fi
-
-    # 双重验证：检查是否已有同路径的脚本运行
-    daemon_pid=$(pidof -x "$SCRIPT_PATH" | tr ' ' '\n' | grep -v $$)
-    if [[ -n "$daemon_pid" ]]; then
-        echo "Another instance of the daemon is already running with PID $daemon_pid. Exiting."
-        exit 1
     fi
 }
 
@@ -113,10 +97,12 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+
 export SLIMY_DIR
 export TIMER_DIR
 export PID_DIR
 export LOCKFILE
+
 
 # 检查并创建锁文件
 check_lockfile
@@ -145,6 +131,7 @@ echo "--------------------------------------------------------------"
 
 # 运行所有 .slimy 脚本
 run_slimy_scripts() {
+#    echo "$(date +'%Y-%m-%d %H:%M:%S') - Searching for slimy scripts..."
     find "$SLIMY_DIR" -name "*.slimy" -exec bash -c '{}' \; &
 }
 

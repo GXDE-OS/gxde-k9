@@ -5,8 +5,8 @@
 
 # ============ 可配置变量 ============
 
-# 目标程序路径（需要运行的可执行文件，建议填写绝对路径）
-TARGET_PROCESS="/path/to/your/target/program"
+# 目标程序路径（需要运行的可执行文件或命令）
+TARGET_PROCESS="gxde-requ"
 
 # ====== 若无特殊需求，以下请默认 =======
 
@@ -18,13 +18,14 @@ PROCESS_NAME=$(basename "$0" .slimy)
 
 # ============ 脚本逻辑 ============
 
-# 使用 realpath 获取绝对路径（确保 TARGET_PROCESS 是可执行文件）
-if [[ ! -x "$TARGET_PROCESS" ]]; then
-    TARGET_PROCESS=$(realpath "$TARGET_PROCESS" 2>/dev/null)
-    if [[ $? -ne 0 || ! -x "$TARGET_PROCESS" ]]; then
-        echo "[$PROCESS_NAME] 错误：目标程序 $TARGET_PROCESS 不存在或不可执行！"
-        exit 1
-    fi
+# 检查目标程序路径是否存在且可执行
+if [[ -x "$TARGET_PROCESS" ]]; then
+    # 如果是有效的可执行文件，使用 realpath 获取绝对路径
+    TARGET_PROCESS=$(realpath "$TARGET_PROCESS" 2>/dev/null || echo "$TARGET_PROCESS")
+else
+    # 如果不是文件，认为是启动指令
+#    echo "[$PROCESS_NAME] 未找到文件，将使用命令：$TARGET_PROCESS"
+    true
 fi
 
 # 确保 PID 文件目录存在
@@ -40,14 +41,23 @@ PID_FILE="$PID_DIR/$PROCESS_NAME.pid"
 if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE" 2>/dev/null)
     if [[ -n "$PID" && -e "/proc/$PID" ]]; then
-        # 检查进程路径是否与目标程序匹配
-        PROCESS_PATH=$(readlink -f "/proc/$PID/exe" 2>/dev/null)
-        if [[ "$PROCESS_PATH" == "$TARGET_PROCESS" ]]; then
-            echo "[$PROCESS_NAME] 目标进程正在运行，PID: $PID"
-            exit 0
+        # 检查进程路径是否匹配
+        if [[ -x "$TARGET_PROCESS" ]]; then
+            # 如果是可执行文件，通过 /proc/$PID/exe 检查路径
+            PROCESS_PATH=$(readlink -f "/proc/$PID/exe" 2>/dev/null)
+            if [[ "$PROCESS_PATH" == "$TARGET_PROCESS" ]]; then
+ #               echo "[$PROCESS_NAME] 目标进程正在运行，PID: $PID"
+                exit 0
+            else
+                echo "[$PROCESS_NAME] 无效的 PID 文件，进程路径不匹配。"
+                echo "[$PROCESS_NAME] 文件记录的路径: $PROCESS_PATH"
+                echo "[$PROCESS_NAME] 目标路径: $TARGET_PROCESS"
+                rm -f "$PID_FILE"
+            fi
         else
-            echo "[$PROCESS_NAME] 无效的 PID 文件，清理：$PID_FILE（进程路径不匹配）"
-            rm -f "$PID_FILE"
+            # 如果是命令，简单校验 PID 是否存活
+#            echo "[$PROCESS_NAME] 检测到命令进程，PID: $PID 正在运行。"
+            exit 0
         fi
     else
         echo "[$PROCESS_NAME] 无效的 PID 文件，清理：$PID_FILE"

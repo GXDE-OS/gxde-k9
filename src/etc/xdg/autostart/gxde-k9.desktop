@@ -4,7 +4,7 @@ Name=GXDE K9
 Name[zh_CN]=GXDE K9
 Comment=GXDE K9 
 Type=Application
-Exec=/usr/bin/gxde-k9
+Exec=bash -c '/usr/bin/gxde-k9'
 Icon=deepin-launcher
 Categories=System
 
