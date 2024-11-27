@@ -5,12 +5,12 @@
 
 # ============ 可配置变量 ============
 
-# 目标程序路径（需要运行的可执行文件）
+# 目标程序路径（需要运行的可执行文件，建议填写绝对路径）
 TARGET_PROCESS="/path/to/your/target/program"
 
 # ====== 若无特殊需求，以下请默认 =======
 
-# PID 文件目录（从环境变量 PID_DIR 获取，默认为 /var/run）
+# PID 文件目录（从环境变量 PID_DIR 获取，默认为用户配置目录）
 PID_DIR="${PID_DIR:-$HOME/.config/GXDE/gxde-k9/}"
 
 # 自动生成 PROCESS_NAME 为当前 .slimy 文件名（去掉扩展名）
@@ -18,24 +18,51 @@ PROCESS_NAME=$(basename "$0" .slimy)
 
 # ============ 脚本逻辑 ============
 
+# 使用 realpath 获取绝对路径（确保 TARGET_PROCESS 是可执行文件）
+if [[ ! -x "$TARGET_PROCESS" ]]; then
+    TARGET_PROCESS=$(realpath "$TARGET_PROCESS" 2>/dev/null)
+    if [[ $? -ne 0 || ! -x "$TARGET_PROCESS" ]]; then
+        echo "[$PROCESS_NAME] 错误：目标程序 $TARGET_PROCESS 不存在或不可执行！"
+        exit 1
+    fi
+fi
+
+# 确保 PID 文件目录存在
+mkdir -p "$PID_DIR" || {
+    echo "[$PROCESS_NAME] 错误：无法创建 PID 文件目录 $PID_DIR！"
+    exit 1
+}
+
 # 生成 PID 文件路径
 PID_FILE="$PID_DIR/$PROCESS_NAME.pid"
 
 # 检查 PID 文件是否存在且有效
 if [[ -f "$PID_FILE" ]]; then
-    PID=$(cat "$PID_FILE")
-    if ! kill -0 "$PID" 2>/dev/null; then
+    PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [[ -n "$PID" && -e "/proc/$PID" ]]; then
+        # 检查进程路径是否与目标程序匹配
+        PROCESS_PATH=$(readlink -f "/proc/$PID/exe" 2>/dev/null)
+        if [[ "$PROCESS_PATH" == "$TARGET_PROCESS" ]]; then
+            echo "[$PROCESS_NAME] 目标进程正在运行，PID: $PID"
+            exit 0
+        else
+            echo "[$PROCESS_NAME] 无效的 PID 文件，清理：$PID_FILE（进程路径不匹配）"
+            rm -f "$PID_FILE"
+        fi
+    else
         echo "[$PROCESS_NAME] 无效的 PID 文件，清理：$PID_FILE"
         rm -f "$PID_FILE"
     fi
 fi
 
-# 如果 PID 文件不存在，启动目标进程
-if [[ ! -f "$PID_FILE" ]]; then
-    echo "[$PROCESS_NAME] 目标进程未运行，正在启动：$TARGET_PROCESS"
-    $TARGET_PROCESS &
-    echo $! > "$PID_FILE"
+# 如果 PID 文件不存在或无效，启动目标进程
+echo "[$PROCESS_NAME] 目标进程未运行，正在启动：$TARGET_PROCESS"
+"$TARGET_PROCESS" &
+NEW_PID=$!
+if [[ -n "$NEW_PID" && -e "/proc/$NEW_PID" ]]; then
+    echo "$NEW_PID" > "$PID_FILE"
+    echo "[$PROCESS_NAME] 目标进程启动成功，PID: $NEW_PID"
 else
-    #echo "[$PROCESS_NAME] 目标进程正在运行，PID 文件路径：$PID_FILE"
-    true
+    echo "[$PROCESS_NAME] 错误：目标进程启动失败！"
+    exit 1
 fi
