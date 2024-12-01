@@ -21,7 +21,7 @@ https://gitee.com/GXDE-OS/gxde-k9
 | ----------------- | -------------------------------------------------------------------------------- |
 | `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/usr/share/gxde-k9/slimy/`）。                   |
 | `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/usr/share/gxde-k9/timer/`）。                 |
-| `--pid-dir`    | 自定义 PID 文件位置（默认： `$HOME/.config/GXDE/gxde-k9/`）。 |
+| `--pid-dir`    | 自定义 PID 文件位置（默认： `/tmp/GXDE/gxde-k9/`）。 |
 | `-h`,`--help` | 显示帮助信息并退出。                                                             |
 
 #### **目录结构**

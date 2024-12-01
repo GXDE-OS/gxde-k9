@@ -3,7 +3,7 @@
 # 默认目录
 SLIMY_DIR="/usr/share/gxde-k9/slimy/"
 TIMER_DIR="/usr/share/gxde-k9/timer/"
-PID_DIR="$HOME/.config/GXDE/gxde-k9/"
+PID_DIR="/tmp/GXDE/gxde-k9/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
 
 

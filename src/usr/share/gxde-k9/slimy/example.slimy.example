@@ -11,7 +11,7 @@ TARGET_PROCESS="gxde-requ"
 # ====== 若无特殊需求，以下请默认 =======
 
 # PID 文件目录（从环境变量 PID_DIR 获取，默认为用户配置目录）
-PID_DIR="${PID_DIR:-$HOME/.config/GXDE/gxde-k9/}"
+PID_DIR="${PID_DIR:-/tmp/GXDE/gxde-k9/}"
 
 # 自动生成 PROCESS_NAME 为当前 .slimy 文件名（去掉扩展名）
 PROCESS_NAME=$(basename "$0" .slimy)
