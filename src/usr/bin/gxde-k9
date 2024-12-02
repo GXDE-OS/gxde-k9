@@ -26,8 +26,15 @@ Description:
   user-specific directories: $SLIMY_DIR_USER and $TIMER_DIR_USER.
 
 Timer Example:
-# <minute> <hour> <day> <month> <weekday>|<command>
-0 7 * * 1 /home/user/scripts/weekly_task.sh
+* * * * * <command>
+- - - - -
+| | | | |
+| | | | +----- Day of week (0 - 7) (Sunday=0 or 7)
+| | | +------- Month (1 - 12)
+| | +--------- Day of month (1 - 31)
+| +----------- Hour (0 - 23)
++------------- Minute (0 - 59)
+
 
 EOF
     exit 0
@@ -146,37 +153,108 @@ run_slimy_scripts() {
     find "$SLIMY_DIR_USER" -name "*.slimy" -exec bash -c '{}' \; &
 }
 
-# 解析 crontab-like 格式的定时器时间
-is_time_matched() {
+# 解析 crontab-like 格式的定时器时间 (支持完整的 cron 语法)
+is_cron_time_matched() {
     local cron_time="$1"
     local minute hour day month weekday
+
+    # 将 cron 表达式分解成时间字段
     read -r minute hour day month weekday <<< "$(echo "$cron_time" | tr ' ' '\n')"
     
+    # 获取当前的时间值
     local current_minute=$(date +'%M')
     local current_hour=$(date +'%H')
     local current_day=$(date +'%d')
     local current_month=$(date +'%m')
     local current_weekday=$(date +'%u') # 1=Monday ... 7=Sunday
 
-    [[ "$minute" == "*" || "$minute" == "$current_minute" ]] &&
-    [[ "$hour" == "*" || "$hour" == "$current_hour" ]] &&
-    [[ "$day" == "*" || "$day" == "$current_day" ]] &&
-    [[ "$month" == "*" || "$month" == "$current_month" ]] &&
-    [[ "$weekday" == "*" || "$weekday" == "$current_weekday" ]]
+    # 检查分钟字段
+    if ! matches_cron_field "$minute" "$current_minute"; then return 1; fi
+
+    # 检查小时字段
+    if ! matches_cron_field "$hour" "$current_hour"; then return 1; fi
+
+    # 检查日期字段
+    if ! matches_cron_field "$day" "$current_day"; then return 1; fi
+
+    # 检查月份字段
+    if ! matches_cron_field "$month" "$current_month"; then return 1; fi
+
+    # 检查星期几字段
+    if ! matches_cron_field "$weekday" "$current_weekday"; then return 1; fi
+
+    # 如果所有字段都匹配，则返回 true
+    return 0
 }
 
-# 监控 timer 文件
-monitor_timers() {
+# 处理 cron 字段是否匹配
+matches_cron_field() {
+    local field="$1"
+    local current_value="$2"
+
+    if [[ "$field" == "*" ]]; then
+        return 0  # 匹配所有值
+    elif [[ "$field" == */* ]]; then
+        # 如果是 "*/x" 的形式，例如 "*/5"，表示每 x 个单位匹配一次
+        local step
+        step=$(echo "$field" | cut -d'/' -f2)
+        if (( current_value % step == 0 )); then
+            return 0
+        fi
+    elif [[ "$field" == "$current_value" ]]; then
+        return 0  # 完全匹配
+    elif [[ "$field" == *"-"* ]]; then
+        # 如果是范围形式，例如 "1-5" 表示匹配 1 到 5
+        local start end
+        start=$(echo "$field" | cut -d'-' -f1)
+        end=$(echo "$field" | cut -d'-' -f2)
+        if (( current_value >= start && current_value <= end )); then
+            return 0
+        fi
+    elif [[ "$field" == *","* ]]; then
+        # 如果是逗号分隔的多个值，例如 "1,2,5"
+        IFS=',' read -ra values <<< "$field"
+        for value in "${values[@]}"; do
+            if [[ "$value" == "$current_value" ]]; then
+                return 0
+            fi
+        done
+    fi
+
+    return 1  # 不匹配
+}
+
+# 运行 @reboot 任务
+run_reboot_tasks() {
     while true; do
         for timer_file in "$TIMER_DIR"/*.timer "$TIMER_DIR_USER"/*.timer; do
             [[ -e "$timer_file" ]] || continue
-            # 读取 timer 文件内容
             while IFS= read -r line; do
                 schedule=$(echo "$line" | cut -d'|' -f1)
                 command=$(echo "$line" | cut -d'|' -f2)
                 
-                # 检查定时器条件是否满足
-                if is_time_matched "$schedule"; then
+                # 处理 @reboot 特殊规则
+                if [[ "$schedule" == "@reboot" ]]; then
+                    echo "$(date +'%Y-%m-%d %H:%M:%S') - Running reboot task: $command"
+                    bash -c "$command" &
+                fi
+            done < "$timer_file"
+        done
+        sleep 60
+    done
+}
+
+# 监控 timer 文件并执行任务
+monitor_timers() {
+    while true; do
+        for timer_file in "$TIMER_DIR"/*.timer "$TIMER_DIR_USER"/*.timer; do
+            [[ -e "$timer_file" ]] || continue
+            while IFS= read -r line; do
+                schedule=$(echo "$line" | cut -d'|' -f1)
+                command=$(echo "$line" | cut -d'|' -f2)
+                
+                # 如果 crontab 格式匹配当前时间
+                if is_cron_time_matched "$schedule"; then
                     echo "$(date +'%Y-%m-%d %H:%M:%S') - Running scheduled task: $command"
                     bash -c "$command" &
                 fi
@@ -186,6 +264,8 @@ monitor_timers() {
     done
 }
 
+
+
 # 启动 slimy 监控 (每5秒执行一次)
 watch_slimy_scripts() {
     while true; do
@@ -194,7 +274,11 @@ watch_slimy_scripts() {
     done
 }
 
-# 启动 slimy 和 timer 监控
+# 启动 slimy 
 watch_slimy_scripts &
+# 启动 @reboot 任务
+run_reboot_tasks &
+# 启动定时任务监控
 monitor_timers &
+
 wait
