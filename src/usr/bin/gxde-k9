@@ -1,12 +1,25 @@
 #!/bin/bash
+log.warn() { echo -e "[\e[33mWARN\e[0m]:  \e[1m$*\e[0m"; }
+log.error()  { echo -e "[\e[31mERROR\e[0m]: \e[1m$*\e[0m"; }
+log.info() { echo -e "[\e[96mINFO\e[0m]:  \e[1m$*\e[0m"; }
+log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 
 # 默认目录
-SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/slimy/"
-TIMER_DIR_SYSTEM="/usr/share/gxde-k9/timer/"
+# 判断当前用户是否为 root
+if [[ "$EUID" -eq 0 ]]; then
+    SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/system/slimy/"
+    TIMER_DIR_SYSTEM="/usr/share/gxde-k9/system/timer/"
+else
+    SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/slimy/"
+    TIMER_DIR_SYSTEM="/usr/share/gxde-k9/timer/"
+fi
+
 SLIMY_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/slimy/"
 TIMER_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/timer/"
 PID_DIR="/tmp/GXDE/gxde-k9/$UID/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
+
+
 
 # 打印帮助信息
 print_help() {
@@ -26,29 +39,39 @@ Description:
   user-specific directories: $SLIMY_DIR_USER and $TIMER_DIR_USER.
 
 Timer Example:
-* * * * * <command>
-- - - - -
-| | | | |
+* * * * * | <command>
+- - - - - -
+| | | | | |
+| | | | | +--- IMPORTANT: K9 Need an extra '|' to identify commands !!!!!!!!!!
 | | | | +----- Day of week (0 - 7) (Sunday=0 or 7)
 | | | +------- Month (1 - 12)
 | | +--------- Day of month (1 - 31)
 | +----------- Hour (0 - 23)
 +------------- Minute (0 - 59)
 
-
 EOF
     exit 0
 }
+# 自动创建多个目录（如果不存在）
+create_directory_if_not_exists() {
+    for dir_path in "$@"; do
+        if [[ ! -d "$dir_path" ]]; then
+            log.info "Directory $dir_path does not exist. Creating..."
+            mkdir -p "$dir_path"
+        fi
+    done
+}
+
 
 # 防止多次运行，带 PID 校验
 check_lockfile() {
     if [[ -f "$LOCKFILE" ]]; then
         existing_pid=$(cat "$LOCKFILE")
         if [[ -n "$existing_pid" && -e "/proc/$existing_pid" ]]; then
-            echo "Daemon is already running with PID $existing_pid. Exiting."
+            log.error "Daemon is already running with PID $existing_pid. Exiting."
             exit 1
         else
-            echo "Stale lockfile detected. Removing lockfile and continuing."
+            log.info "Stale lockfile detected. Removing lockfile and continuing."
             rm -f "$LOCKFILE"
         fi
     fi
@@ -56,7 +79,7 @@ check_lockfile() {
 
 # 创建锁文件
 create_lockfile() {
-    mkdir -p "$(dirname "$LOCKFILE")"
+    create_directory_if_not_exists "$(dirname "$LOCKFILE")"
     echo $$ > "$LOCKFILE"
 }
 
@@ -72,7 +95,7 @@ while [[ $# -gt 0 ]]; do
         --slimy-dir)
             shift
             if [[ -z "$1" ]]; then
-                echo "Error: --slimy-dir requires a directory path."
+                log.error "Error: --slimy-dir requires a directory path."
                 exit 1
             fi
             SLIMY_DIR="$1"
@@ -80,7 +103,7 @@ while [[ $# -gt 0 ]]; do
         --timer-dir)
             shift
             if [[ -z "$1" ]]; then
-                echo "Error: --timer-dir requires a directory path."
+                log.error "Error: --timer-dir requires a directory path."
                 exit 1
             fi
             TIMER_DIR="$1"
@@ -88,7 +111,7 @@ while [[ $# -gt 0 ]]; do
         --pid-dir)
             shift
             if [[ -z "$1" ]]; then
-                echo "Error: --pid-dir requires a directory path."
+                log.error "Error: --pid-dir requires a directory path."
                 exit 1
             fi
             PID_DIR="$1"
@@ -98,28 +121,34 @@ while [[ $# -gt 0 ]]; do
             print_help
             ;;
         *)
-            echo "Unknown option: $1"
+            log.error "Unknown option: $1"
             print_help
             ;;
     esac
     shift
 done
 
-# 使用用户指定的目录或默认目录
-export SLIMY_DIR="$SLIMY_DIR_SYSTEM"
-export TIMER_DIR="$TIMER_DIR_SYSTEM"
 
-if [[ -d "$SLIMY_DIR_USER" ]]; then
-    SLIMY_DIR="$SLIMY_DIR_USER"
+
+# 使用用户指定的目录或默认目录
+if [[ -z "$SLIMY_DIR" ]]; then
+    export SLIMY_DIR="$SLIMY_DIR_SYSTEM"
+else
+    unset SLIMY_DIR_USER
 fi
-if [[ -d "$TIMER_DIR_USER" ]]; then
-    TIMER_DIR="$TIMER_DIR_USER"
+if [[ -z "$TIMER_DIR" ]]; then
+    export TIMER_DIR="$TIMER_DIR_SYSTEM"
+else
+    unset TIMER_DIR_USER
 fi
 
 export SLIMY_DIR
 export TIMER_DIR
 export PID_DIR
 export LOCKFILE
+
+create_directory_if_not_exists ${SLIMY_DIR_SYSTEM} ${TIMER_DIR_SYSTEM} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${PID_DIR}
+
 
 # 检查并创建锁文件
 check_lockfile
@@ -128,70 +157,28 @@ create_lockfile
 
 # 确保目录存在
 if [[ ! -d "$SLIMY_DIR" ]]; then
-    echo "Error: Slimy directory $SLIMY_DIR does not exist!"
+    log.error "Error: Slimy directory $SLIMY_DIR does not exist!"
     remove_lockfile
 fi
 
 if [[ ! -d "$TIMER_DIR" ]]; then
-    echo "Error: Timer directory $TIMER_DIR does not exist!"
+    log.error "Error: Timer directory $TIMER_DIR does not exist!"
     remove_lockfile
 fi
 
 # 输出启动信息
-echo "--------------------------------------------------------------"
-echo "K9 Lick Daemon gen 2 is ready"
-echo "I am $(whoami)"
-echo "Watching slimy orders at $SLIMY_DIR and $SLIMY_DIR_USER"
-echo "Monitoring timers at $TIMER_DIR and $TIMER_DIR_USER"
-echo "Lockfile location: $LOCKFILE"
-echo "--------------------------------------------------------------"
-
-# 运行所有 .slimy 脚本
-run_slimy_scripts() {
-    # 在两个目录中查找 .slimy 文件并执行
-    find "$SLIMY_DIR" -name "*.slimy" -exec bash -c '{}' \; &
-    find "$SLIMY_DIR_USER" -name "*.slimy" -exec bash -c '{}' \; &
-}
-
-# 解析 crontab-like 格式的定时器时间 (支持完整的 cron 语法)
-is_cron_time_matched() {
-    local cron_time="$1"
-    local minute hour day month weekday
-
-    # 将 cron 表达式分解成时间字段
-    read -r minute hour day month weekday <<< "$(echo "$cron_time" | tr ' ' '\n')"
-    
-    # 获取当前的时间值
-    local current_minute=$(date +'%M')
-    local current_hour=$(date +'%H')
-    local current_day=$(date +'%d')
-    local current_month=$(date +'%m')
-    local current_weekday=$(date +'%u') # 1=Monday ... 7=Sunday
-
-    # 检查分钟字段
-    if ! matches_cron_field "$minute" "$current_minute"; then return 1; fi
-
-    # 检查小时字段
-    if ! matches_cron_field "$hour" "$current_hour"; then return 1; fi
-
-    # 检查日期字段
-    if ! matches_cron_field "$day" "$current_day"; then return 1; fi
-
-    # 检查月份字段
-    if ! matches_cron_field "$month" "$current_month"; then return 1; fi
-
-    # 检查星期几字段
-    if ! matches_cron_field "$weekday" "$current_weekday"; then return 1; fi
-
-    # 如果所有字段都匹配，则返回 true
-    return 0
-}
+log.info "--------------------------------------------------------------"
+log.info "K9 Lick Daemon gen 2 is ready"
+log.info "I am $(whoami)"
+log.info "Watching slimy orders at $SLIMY_DIR | $SLIMY_DIR_USER"
+log.info "Monitoring timers at $TIMER_DIR | $TIMER_DIR_USER"
+log.info "Lockfile location: $LOCKFILE"
+log.info "--------------------------------------------------------------"
 
 # 处理 cron 字段是否匹配
 matches_cron_field() {
     local field="$1"
     local current_value="$2"
-
     if [[ "$field" == "*" ]]; then
         return 0  # 匹配所有值
     elif [[ "$field" == */* ]]; then
@@ -223,45 +210,93 @@ matches_cron_field() {
 
     return 1  # 不匹配
 }
+# 解析 crontab-like 格式的定时器时间 (支持完整的 cron 语法)
+is_cron_time_matched() {
+    local cron_time="$1"
+    local minute hour day month weekday
 
-# 运行 @reboot 任务
-run_reboot_tasks() {
-    while true; do
-        for timer_file in "$TIMER_DIR"/*.timer "$TIMER_DIR_USER"/*.timer; do
+    # 将 cron 表达式分解成时间字段
+    IFS=' ' read -r minute hour day month weekday <<< "$cron_time"
+
+    # 获取当前的时间值
+    local current_minute=$(date +'%M')
+    local current_hour=$(date +'%H')
+    local current_day=$(date +'%d')
+    local current_month=$(date +'%m')
+    local current_weekday=$(date +'%u') # 1=Monday ... 7=Sunday
+
+    # 检查分钟字段
+    if ! matches_cron_field "$minute" "$current_minute"; then return 1; fi
+
+    # 检查小时字段
+    if ! matches_cron_field "$hour" "$current_hour"; then return 1; fi
+
+    # 检查日期字段
+    if ! matches_cron_field "$day" "$current_day"; then return 1; fi
+
+    # 检查月份字段
+    if ! matches_cron_field "$month" "$current_month"; then return 1; fi
+
+    # 检查星期几字段
+    if ! matches_cron_field "$weekday" "$current_weekday"; then return 1; fi
+
+    # 如果所有字段都匹配，则返回 true
+    return 0
+}
+
+
+execute_timers_scripts_in_dir(){
+    local dir_path="$1"
+        for timer_file in "$dir_path"/*.timer ; do
             [[ -e "$timer_file" ]] || continue
             while IFS= read -r line; do
                 schedule=$(echo "$line" | cut -d'|' -f1)
                 command=$(echo "$line" | cut -d'|' -f2)
-                
-                # 处理 @reboot 特殊规则
-                if [[ "$schedule" == "@reboot" ]]; then
-                    echo "$(date +'%Y-%m-%d %H:%M:%S') - Running reboot task: $command"
+                # 如果 crontab 格式匹配当前时间
+                if is_cron_time_matched "$schedule"; then
+                    log.info "$(date +'%Y-%m-%d %H:%M:%S') - Running scheduled task: $command"
                     bash -c "$command" &
                 fi
             done < "$timer_file"
         done
-        sleep 60
-    done
 }
 
 # 监控 timer 文件并执行任务
 monitor_timers() {
     while true; do
-        for timer_file in "$TIMER_DIR"/*.timer "$TIMER_DIR_USER"/*.timer; do
-            [[ -e "$timer_file" ]] || continue
-            while IFS= read -r line; do
-                schedule=$(echo "$line" | cut -d'|' -f1)
-                command=$(echo "$line" | cut -d'|' -f2)
-                
-                # 如果 crontab 格式匹配当前时间
-                if is_cron_time_matched "$schedule"; then
-                    echo "$(date +'%Y-%m-%d %H:%M:%S') - Running scheduled task: $command"
-                    bash -c "$command" &
-                fi
-            done < "$timer_file"
-        done
+    execute_timers_scripts_in_dir "$TIMER_DIR"
+    # 如果用户目录存在，也执行其中的脚本
+    if [[ -n "$TIMER_DIR_USER" ]]; then
+    execute_timers_scripts_in_dir "$TIMER_DIR_USER"
+    fi
         sleep 60
     done
+}
+
+
+# 运行所有 .slimy 脚本
+execute_slimy_scripts_in_dir() {
+    local dir_path="$1"
+
+    # 查找所有 .slimy 文件并逐一执行
+    for slimy_file in "$dir_path"/*.slimy; do
+        # 检查文件是否存在，避免在目录为空时出错
+        [[ -e "$slimy_file" ]] || continue
+        
+#        echo "$(date +'%Y-%m-%d %H:%M:%S') - Executing slimy script: $slimy_file"
+        bash "$slimy_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing slimy script: $slimy_file"
+    done &
+}
+
+
+run_slimy_scripts() {
+    # 执行指定目录中的所有 .slimy 脚本
+    execute_slimy_scripts_in_dir "$SLIMY_DIR"
+
+    # 如果用户目录存在，也执行其中的脚本
+    if [[ -n "$SLIMY_DIR_USER" ]]; then
+        execute_slimy_scripts_in_dir "$SLIMY_DIR_USER"
+    fi
 }
 
 
@@ -276,8 +311,6 @@ watch_slimy_scripts() {
 
 # 启动 slimy 
 watch_slimy_scripts &
-# 启动 @reboot 任务
-run_reboot_tasks &
 # 启动定时任务监控
 monitor_timers &
 

@@ -1,0 +1,4 @@
+* * * * * | notify-send "Current Time" "$(date '+%Y-%m-%d %H:%M:%S')"
+*/2 * * * * | notify-send "当前时间: $(date)"
+
+

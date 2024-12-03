@@ -19,8 +19,8 @@ https://gitee.com/GXDE-OS/gxde-k9
 
 | 参数              | 说明                                                                             |
 | ----------------- | -------------------------------------------------------------------------------- |
-| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/usr/share/gxde-k9/slimy/`）。                   |
-| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/usr/share/gxde-k9/timer/`）。                 |
+| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/usr/share/gxde-k9/slimy/`，root下为`/usr/share/gxde-k9/system/slimy/`）。                   |
+| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/usr/share/gxde-k9/timer/`，root下为`/usr/share/gxde-k9/system/timer/`）。                 |
 | `--pid-dir`    | 自定义 PID 文件位置（默认： `/tmp/GXDE/gxde-k9/`）。 |
 | `-h`,`--help` | 显示帮助信息并退出。                                                             |
 
@@ -34,8 +34,21 @@ slimy有example,可以非常简单地创建一个[watchdog](src/usr/share/gxde-k
 
 
 ```
-<crontab格式>|<执行指令>
+Timer Example:
+* * * * * | <command>
+- - - - - -
+| | | | | |
+| | | | | +--- IMPORTANT: K9 Need an extra '|' to identify commands !!!!!!!!!!
+| | | | +----- Day of week (0 - 7) (Sunday=0 or 7)
+| | | +------- Month (1 - 12)
+| | +--------- Day of month (1 - 31)
+| +----------- Hour (0 - 23)
++------------- Minute (0 - 59)
+
+*/2 * * * * Use / to explain every
 ```
+注意这里要多一个 | 
+
 
 示例：
 
