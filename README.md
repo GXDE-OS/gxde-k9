@@ -4,7 +4,7 @@
 
 K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户态watchdog，如果你因为种种原因无法使用systemd(比如正在容器中使用)，则可用gxde-k9实现一个基本的服务拉起工具/定时任务工具
 
-https://gitee.com/GXDE-OS/gxde-k9
+
 
 ---
 
@@ -15,9 +15,48 @@ https://gitee.com/GXDE-OS/gxde-k9
 3. 自动检测并清理僵尸锁文件，防止多次运行。
 4. 支持自定义 PID 文件路径，方便灵活部署。
 
-#### **参数说明**
+#### **用法**
+
+把需要监视启动的服务参照 [这个模板](src/usr/share/gxde-k9/slimy/example.slimy.example) 修改好后，后缀名改为`.slimy`并放入指定路径/slimy即可监控
+
+把需要定时执行的任务参照 crontab 语法写好后，后缀名为`.timer`，放入指定路径/timer即可定时执行任务
+
+
+示例：
 
 ```
+* * * * *|echo "每分钟运行"
+*/2 * * * *|echo "每2分钟运行"
+0 12 * * *|bash /path/to/script.sh
+```
+
+
+```
+用法: ./gxde-k9 [选项]
+
+选项:
+  --slimy-dir <路径>     指定监视 .slimy 脚本的目录。
+  --timer-dir <路径>     指定监视 .timer 文件的目录。
+  --pid-dir <路径>       指定 PID 目录的位置。
+  --termux               使用 ${HOME}/gxde-k9/ 作为监视目录，以适配 termux 环境。
+  -h                     显示此帮助信息并退出。
+
+描述:
+  K9 Lick Daemon 2 代监视指定目录中的 .slimy 脚本并执行它们。它还支持具有类 crontab 调度的 .timer 文件。
+  默认情况下，它监视 $SLIMY_DIR_SYSTEM 和 $TIMER_DIR_SYSTEM，以及用户特定的目录：$SLIMY_DIR_USER 和 $TIMER_DIR_USER。
+
+定时器示例：
+* * * * * | <命令>
+- - - - - -
+| | | | | |
+| | | | | +--- 重要提示: K9 需要额外的 '|' 来识别命令!!!!!!!!!
+| | | | +----- 星期几 (0 - 7) (星期天=0 或 7)
+| | | +------- 月份 (1 - 12)
+| | +--------- 月日 (1 - 31)
+| +----------- 小时 (0 - 23)
++------------- 分钟 (0 - 59)
+
+
 Usage: ./gxde-k9 [options]
 
 Options:
@@ -42,44 +81,26 @@ Timer Example:
 | | +--------- Day of month (1 - 31)
 | +----------- Hour (0 - 23)
 +------------- Minute (0 - 59)
-                                                            |
+```
+                                                           
 注意：如果是使用root启动，则默认的系统slimy和timer位置为
 
-/usr/share/gxde-k9/system/slimy/ and /usr/share/gxde-k9/system/timer/
+`/usr/share/gxde-k9/system/slimy/` and `/usr/share/gxde-k9/system/timer/`
 ```
 
 #### **目录结构**
+```
+.
+├── slimy
+└── timer
+
+3 directories, 0 files
+```
 
 * **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
-* **`timer` 目录**：存放定时器配置文件（`.timer` 文件），每行使用以下格式：
-
-slimy有example,可以非常简单地创建一个[watchdog](src/usr/share/gxde-k9/slimy/example.slimy.example)
+* **`timer` 目录**：存放定时器配置文件`.timer` 文件
 
 
-
-```
-Timer Example:
-* * * * * | <command>
-- - - - - -
-| | | | | |
-| | | | | +--- IMPORTANT: K9 Need an extra '|' to identify commands !!!!!!!!!!
-| | | | +----- Day of week (0 - 7) (Sunday=0 or 7)
-| | | +------- Month (1 - 12)
-| | +--------- Day of month (1 - 31)
-| +----------- Hour (0 - 23)
-+------------- Minute (0 - 59)
-
-*/2 * * * * Use / to explain every
-```
-注意这里要多一个 | 
-
-
-示例：
-
-```
-* * * * *|echo "每分钟运行"
-0 12 * * *|bash /path/to/script.sh
-```
 
 #### **示例**
 
@@ -93,16 +114,9 @@ Timer Example:
    ```
    gxde-k9 --slimy-dir /my/slimy/scripts --pid-dir /tmp/mydaemon/
    ```
-3. 检查帮助信息：
+3. 在termux上使用：
    
    ```
-   gxde-k9 --help
+   gxde-k9 --termux
    ```
-
-注意事项
-
-```
-确保 .slimy 和 .timer 文件的内容正确且可执行。
-脚本需要运行在 Bash 环境中，且定时任务的 crontab 格式需合法。
-```
 
