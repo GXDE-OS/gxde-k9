@@ -30,6 +30,7 @@ Options:
   --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
   --timer-dir <path>   Specify the directory to monitor for .timer files.
   --pid-dir <path>     Specify the location for the PID DIR.
+  --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   -h                   Show this help message and exit.
 
 Description:
@@ -116,6 +117,11 @@ while [[ $# -gt 0 ]]; do
             fi
             PID_DIR="$1"
             LOCKFILE="$1/gxde-k9-daemon.lock"
+            ;;
+        --termux)
+            shift
+            SLIMY_DIR=${HOME}/gxde-k9/slimy/
+            TIMER_DIR=${HOME}/gxde-k9/timer/
             ;;
         -h|--help)
             print_help
