@@ -9,13 +9,16 @@ log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 if [[ "$EUID" -eq 0 ]]; then
     SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/system/slimy/"
     TIMER_DIR_SYSTEM="/usr/share/gxde-k9/system/timer/"
+    SHOT_DIR_SYSTEM="/usr/share/gxde-k9/system/shot/"
 else
     SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/slimy/"
     TIMER_DIR_SYSTEM="/usr/share/gxde-k9/timer/"
+    SHOT_DIR_SYSTEM="/usr/share/gxde-k9/shot/"
 fi
 
 SLIMY_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/slimy/"
 TIMER_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/timer/"
+SHOT_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/shot/"
 PID_DIR="/tmp/GXDE/gxde-k9/$UID/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
 
@@ -29,6 +32,7 @@ Usage: $0 [options]
 Options:
   --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
   --timer-dir <path>   Specify the directory to monitor for .timer files.
+  --shot-dir <path>    Specify the location for the .shot DIR.
   --pid-dir <path>     Specify the location for the PID DIR.
   --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   -h                   Show this help message and exit.
@@ -109,6 +113,14 @@ while [[ $# -gt 0 ]]; do
             fi
             TIMER_DIR="$1"
             ;;
+       --shot-dir)
+            shift
+            if [[ -z "$1" ]]; then
+                log.error "Error: --shot-dir requires a directory path."
+                exit 1
+            fi
+            SHOT_DIR="$1"
+            ;;
         --pid-dir)
             shift
             if [[ -z "$1" ]]; then
@@ -122,7 +134,8 @@ while [[ $# -gt 0 ]]; do
             shift
             SLIMY_DIR=${HOME}/gxde-k9/slimy/
             TIMER_DIR=${HOME}/gxde-k9/timer/
-            PID_DIR="${HOME}/gxde-k9/$UID/"
+            SHOT_DIR=${HOME}/gxde-k9/shot/
+            PID_DIR="${TMPDIR:-${HOME}}/gxde-k9/$UID/"
             LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
             ;;
         -h|--help)
@@ -149,13 +162,19 @@ if [[ -z "$TIMER_DIR" ]]; then
 else
     unset TIMER_DIR_USER
 fi
+if [[ -z "$SHOT_DIR" ]]; then
+    export SHOT_DIR="$SHOT_DIR_SYSTEM"
+else
+    unset SHOT_DIR_USER
+fi
 
 export SLIMY_DIR
 export TIMER_DIR
+export SHOT_DIR
 export PID_DIR
 export LOCKFILE
 
-create_directory_if_not_exists ${SLIMY_DIR} ${TIMER_DIR} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${PID_DIR}
+create_directory_if_not_exists ${SLIMY_DIR} ${TIMER_DIR} ${SHOT_DIR} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${SHOT_DIR_USER} ${PID_DIR} 
 
 
 # 检查并创建锁文件
@@ -180,6 +199,7 @@ log.info "K9 Lick Daemon gen 2 is ready"
 log.info "I am $(whoami)"
 log.info "Watching slimy orders at $SLIMY_DIR | $SLIMY_DIR_USER"
 log.info "Monitoring timers at $TIMER_DIR | $TIMER_DIR_USER"
+log.info "Monitoring shots at $SHOT_DIR | $SHOT_DIR_USER"
 log.info "Lockfile location: $LOCKFILE"
 log.info "--------------------------------------------------------------"
 
@@ -308,7 +328,24 @@ run_slimy_scripts() {
     fi
 }
 
+execute_shot_scripts_in_dir() {
+    local dir_path="$1"
+    for shot_file in "$dir_path"/*.shot ; do
+        [[ -e "$shot_file" ]] || continue
+        log.info "$(date +'%Y-%m-%d %H:%M:%S') - Executing one-shot script: $shot_file"
+        bash "$shot_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing one-shot script: $shot_file"
+    done
+}
 
+run_shot_scripts() {
+    # 执行指定目录中的所有 .slimy 脚本
+    execute_shot_scripts_in_dir "$SHOT_DIR"
+
+    # 如果用户目录存在，也执行其中的脚本
+    if [[ -n "$SHOT_DIR_USER" ]]; then
+        execute_shot_scripts_in_dir "$SHOT_DIR_USER"
+    fi
+}
 
 # 启动 slimy 监控 (每5秒执行一次)
 watch_slimy_scripts() {
@@ -318,6 +355,8 @@ watch_slimy_scripts() {
     done
 }
 
+# 只执行一次 shot 脚本
+run_shot_scripts &
 # 启动 slimy 
 watch_slimy_scripts &
 # 启动定时任务监控

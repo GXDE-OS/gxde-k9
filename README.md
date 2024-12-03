@@ -37,6 +37,7 @@ K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户
 选项:
   --slimy-dir <路径>     指定监视 .slimy 脚本的目录。
   --timer-dir <路径>     指定监视 .timer 文件的目录。
+  --shot-dir <路径>      指定监视 .shot 文件的目录。
   --pid-dir <路径>       指定 PID 目录的位置。
   --termux               使用 ${HOME}/gxde-k9/ 作为监视目录，以适配 termux 环境。
   -h                     显示此帮助信息并退出。
@@ -62,14 +63,16 @@ Usage: ./gxde-k9 [options]
 Options:
   --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
   --timer-dir <path>   Specify the directory to monitor for .timer files.
+  --shot-dir <path>    Specify the location for the .shot DIR.
   --pid-dir <path>     Specify the location for the PID DIR.
+  --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   -h                   Show this help message and exit.
 
 Description:
   K9 Lick Daemon gen 2 monitors a specified directory for .slimy scripts
   and executes them. It also supports .timer files with crontab-like schedules.
   By default, it monitors /usr/share/gxde-k9/slimy/ and /usr/share/gxde-k9/timer/, as well as
-  user-specific directories: $HOME/.local/share/GXDE/gxde-k9/slimy/ and $HOME/.local/share/GXDE/gxde-k9/timer/.
+  user-specific directories: /home/shenmo-ikun/.local/share/GXDE/gxde-k9/slimy/ and /home/shenmo-ikun/.local/share/GXDE/gxde-k9/timer/.
 
 Timer Example:
 * * * * * | <command>
@@ -92,14 +95,16 @@ Timer Example:
 
 ```
 .
+├── shot
 ├── slimy
 └── timer
 
 3 directories, 0 files
 ```
 
+* **`shot` 目录**：存放启动时执行一次的`.shot` 文件
 * **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
-* **`timer` 目录**：存放定时器配置文件`.timer` 文件
+* **`timer` 目录**：存放定时器配置文件 `.timer` 文件
 
 
 

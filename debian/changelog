@@ -1,4 +1,4 @@
-gxde-k9 (1.4.0) UNRELEASED; urgency=low
+gxde-k9 (1.5.0) UNRELEASED; urgency=low
 
   * Support timer
   * Add Example
@@ -8,5 +8,6 @@ gxde-k9 (1.4.0) UNRELEASED; urgency=low
   * Change default pid dir to /tmp/GXDE/gxde-k9/$UID/ to fix unable to start
   * Also detect ~/.local/share/GXDE/gxde-k9
   * Support root service
+  * Support one-shot task
 
  -- shenmo <shenmo@spark-app.store>  Fri, 22 Nov 2024 14:10:55 +0800
