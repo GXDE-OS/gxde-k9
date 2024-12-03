@@ -219,11 +219,12 @@ is_cron_time_matched() {
     IFS=' ' read -r minute hour day month weekday <<< "$cron_time"
 
     # 获取当前的时间值
-    local current_minute=$(date +'%M')
-    local current_hour=$(date +'%H')
-    local current_day=$(date +'%d')
-    local current_month=$(date +'%m')
-    local current_weekday=$(date +'%u') # 1=Monday ... 7=Sunday
+# 获取当前的时间值
+local current_minute=$(date +'%M' | sed 's/^0//')  # 去掉前导零
+local current_hour=$(date +'%H' | sed 's/^0//')    # 去掉前导零
+local current_day=$(date +'%d' | sed 's/^0//')      # 去掉前导零
+local current_month=$(date +'%m' | sed 's/^0//')    # 去掉前导零
+local current_weekday=$(date +'%u')                  # 星期几没有前导零
 
     # 检查分钟字段
     if ! matches_cron_field "$minute" "$current_minute"; then return 1; fi
