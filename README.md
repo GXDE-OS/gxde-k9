@@ -86,9 +86,10 @@ Timer Example:
 注意：如果是使用root启动，则默认的系统slimy和timer位置为
 
 `/usr/share/gxde-k9/system/slimy/` and `/usr/share/gxde-k9/system/timer/`
-```
+
 
 #### **目录结构**
+
 ```
 .
 ├── slimy
