@@ -122,6 +122,7 @@ while [[ $# -gt 0 ]]; do
             shift
             SLIMY_DIR=${HOME}/gxde-k9/slimy/
             TIMER_DIR=${HOME}/gxde-k9/timer/
+            PID_DIR="${HOME}/gxde-k9/$UID/"
             ;;
         -h|--help)
             print_help
