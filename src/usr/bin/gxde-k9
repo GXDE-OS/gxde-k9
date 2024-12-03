@@ -153,7 +153,7 @@ export TIMER_DIR
 export PID_DIR
 export LOCKFILE
 
-create_directory_if_not_exists ${SLIMY_DIR_SYSTEM} ${TIMER_DIR_SYSTEM} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${PID_DIR}
+create_directory_if_not_exists ${SLIMY_DIR} ${TIMER_DIR} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${PID_DIR}
 
 
 # 检查并创建锁文件
