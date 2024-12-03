@@ -16,6 +16,8 @@ https://gitee.com/GXDE-OS/gxde-k9
 4. 支持自定义 PID 文件路径，方便灵活部署。
 
 #### **参数说明**
+
+```
 Usage: ./gxde-k9 [options]
 
 Options:
@@ -44,7 +46,7 @@ Timer Example:
 注意：如果是使用root启动，则默认的系统slimy和timer位置为
 
 /usr/share/gxde-k9/system/slimy/ and /usr/share/gxde-k9/system/timer/
-
+```
 
 #### **目录结构**
 
