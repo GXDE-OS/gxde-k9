@@ -16,13 +16,35 @@ https://gitee.com/GXDE-OS/gxde-k9
 4. 支持自定义 PID 文件路径，方便灵活部署。
 
 #### **参数说明**
+Usage: ./gxde-k9 [options]
 
-| 参数              | 说明                                                                             |
-| ----------------- | -------------------------------------------------------------------------------- |
-| `--slimy-dir`   | 指定 `.slimy`脚本监控目录（默认：`/usr/share/gxde-k9/slimy/`，root下为`/usr/share/gxde-k9/system/slimy/`）。                   |
-| `--timer-dir`   | 指定 `.timer`定时器文件目录（默认：`/usr/share/gxde-k9/timer/`，root下为`/usr/share/gxde-k9/system/timer/`）。                 |
-| `--pid-dir`    | 自定义 PID 文件位置（默认： `/tmp/GXDE/gxde-k9/`）。 |
-| `-h`,`--help` | 显示帮助信息并退出。                                                             |
+Options:
+  --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
+  --timer-dir <path>   Specify the directory to monitor for .timer files.
+  --pid-dir <path>     Specify the location for the PID DIR.
+  -h                   Show this help message and exit.
+
+Description:
+  K9 Lick Daemon gen 2 monitors a specified directory for .slimy scripts
+  and executes them. It also supports .timer files with crontab-like schedules.
+  By default, it monitors /usr/share/gxde-k9/slimy/ and /usr/share/gxde-k9/timer/, as well as
+  user-specific directories: $HOME/.local/share/GXDE/gxde-k9/slimy/ and $HOME/.local/share/GXDE/gxde-k9/timer/.
+
+Timer Example:
+* * * * * | <command>
+- - - - - -
+| | | | | |
+| | | | | +--- IMPORTANT: K9 Need an extra '|' to identify commands !!!!!!!!!!
+| | | | +----- Day of week (0 - 7) (Sunday=0 or 7)
+| | | +------- Month (1 - 12)
+| | +--------- Day of month (1 - 31)
+| +----------- Hour (0 - 23)
++------------- Minute (0 - 59)
+                                                            |
+注意：如果是使用root启动，则默认的系统slimy和timer位置为
+
+/usr/share/gxde-k9/system/slimy/ and /usr/share/gxde-k9/system/timer/
+
 
 #### **目录结构**
 
