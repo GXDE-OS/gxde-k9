@@ -116,13 +116,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             PID_DIR="$1"
-            LOCKFILE="$1/gxde-k9-daemon.lock"
+            LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
             ;;
         --termux)
             shift
             SLIMY_DIR=${HOME}/gxde-k9/slimy/
             TIMER_DIR=${HOME}/gxde-k9/timer/
             PID_DIR="${HOME}/gxde-k9/$UID/"
+            LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
             ;;
         -h|--help)
             print_help
