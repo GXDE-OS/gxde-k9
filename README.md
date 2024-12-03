@@ -4,7 +4,9 @@
 
 K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户态watchdog，如果你因为种种原因无法使用systemd(比如正在容器中使用)，则可用gxde-k9实现一个基本的服务拉起工具/定时任务工具
 
+非常适用于使用termux/proot-distro/需要一个简单的服务管理器但又不想写systemd的朋友
 
+在termux上，仅需下载 [src/usr/bin/gxde-k9](src/usr/bin/gxde-k9) 文件并运行 bash ./gxde-k9 --termux 即可开始使用，无任何外部依赖
 
 ---
 
