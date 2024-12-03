@@ -7,18 +7,13 @@ log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 # 默认目录
 # 判断当前用户是否为 root
 if [[ "$EUID" -eq 0 ]]; then
-    SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/system/slimy/"
-    TIMER_DIR_SYSTEM="/usr/share/gxde-k9/system/timer/"
-    SHOT_DIR_SYSTEM="/usr/share/gxde-k9/system/shot/"
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9/system/"
 else
-    SLIMY_DIR_SYSTEM="/usr/share/gxde-k9/slimy/"
-    TIMER_DIR_SYSTEM="/usr/share/gxde-k9/timer/"
-    SHOT_DIR_SYSTEM="/usr/share/gxde-k9/shot/"
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9/"
 fi
 
-SLIMY_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/slimy/"
-TIMER_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/timer/"
-SHOT_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/shot/"
+BASE_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/"
+
 PID_DIR="/tmp/GXDE/gxde-k9/$UID/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
 
@@ -30,9 +25,7 @@ print_help() {
 Usage: $0 [options]
 
 Options:
-  --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
-  --timer-dir <path>   Specify the directory to monitor for .timer files.
-  --shot-dir <path>    Specify the location for the .shot DIR.
+  --base-dir <path>    Specify the directory to monitor for .slimy .timer .shot scripts.
   --pid-dir <path>     Specify the location for the PID DIR.
   --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   -h                   Show this help message and exit.
@@ -67,6 +60,15 @@ create_directory_if_not_exists() {
     done
 }
 
+function check_exist(){
+    for arg in "$@";do
+        if [[ ! -e "$arg" ]];then
+            log.error "File or Directory does not exist: $arg "
+        exit 1
+        fi
+    done
+}
+
 
 # 防止多次运行，带 PID 校验
 check_lockfile() {
@@ -97,29 +99,13 @@ remove_lockfile() {
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --slimy-dir)
+        --base-dir)
             shift
             if [[ -z "$1" ]]; then
-                log.error "Error: --slimy-dir requires a directory path."
+                log.error "Error: --base-dir requires a directory path."
                 exit 1
             fi
-            SLIMY_DIR="$1"
-            ;;
-        --timer-dir)
-            shift
-            if [[ -z "$1" ]]; then
-                log.error "Error: --timer-dir requires a directory path."
-                exit 1
-            fi
-            TIMER_DIR="$1"
-            ;;
-       --shot-dir)
-            shift
-            if [[ -z "$1" ]]; then
-                log.error "Error: --shot-dir requires a directory path."
-                exit 1
-            fi
-            SHOT_DIR="$1"
+            BASE_DIR="$1"
             ;;
         --pid-dir)
             shift
@@ -132,9 +118,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --termux)
             shift
-            SLIMY_DIR=${HOME}/gxde-k9/slimy/
-            TIMER_DIR=${HOME}/gxde-k9/timer/
-            SHOT_DIR=${HOME}/gxde-k9/shot/
+            BASE_DIR=${HOME}/gxde-k9/
             PID_DIR="${TMPDIR:-${HOME}}/gxde-k9/$UID/"
             LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
             ;;
@@ -152,22 +136,23 @@ done
 
 
 # 使用用户指定的目录或默认目录
-if [[ -z "$SLIMY_DIR" ]]; then
-    export SLIMY_DIR="$SLIMY_DIR_SYSTEM"
-else
-    unset SLIMY_DIR_USER
-fi
-if [[ -z "$TIMER_DIR" ]]; then
-    export TIMER_DIR="$TIMER_DIR_SYSTEM"
-else
-    unset TIMER_DIR_USER
-fi
-if [[ -z "$SHOT_DIR" ]]; then
-    export SHOT_DIR="$SHOT_DIR_SYSTEM"
-else
-    unset SHOT_DIR_USER
+if [[ -n "$BASE_DIR" ]]; then
+    BASE_DIR_SYSTEM="${BASE_DIR}"
 fi
 
+# 合成变量
+    SLIMY_DIR_SYSTEM="${BASE_DIR_SYSTEM}/slimy/"
+    TIMER_DIR_SYSTEM="${BASE_DIR_SYSTEM}/timer/"
+    SHOT_DIR_SYSTEM="${BASE_DIR_SYSTEM}/shot/"
+    SLIMY_DIR="$SLIMY_DIR_SYSTEM"
+    TIMER_DIR="$TIMER_DIR_SYSTEM"
+    SHOT_DIR="$SHOT_DIR_SYSTEM"
+if [[ -z "$BASE_DIR" ]]; then # 有指定的就不改了
+    SLIMY_DIR_USER="$BASE_DIR_USER/slimy/"
+    TIMER_DIR_USER="$BASE_DIR_USER/timer/"
+    SHOT_DIR_USER="$BASE_DIR_USER/shot/"
+fi
+log.debug $BASE_DIR $BASE_DIR_SYSTEM $SLIMY_DIR
 export SLIMY_DIR
 export TIMER_DIR
 export SHOT_DIR
@@ -182,6 +167,7 @@ check_lockfile
 trap remove_lockfile SIGINT SIGTERM
 create_lockfile
 
+
 # 确保目录存在
 if [[ ! -d "$SLIMY_DIR" ]]; then
     log.error "Error: Slimy directory $SLIMY_DIR does not exist!"
@@ -190,6 +176,16 @@ fi
 
 if [[ ! -d "$TIMER_DIR" ]]; then
     log.error "Error: Timer directory $TIMER_DIR does not exist!"
+    remove_lockfile
+fi
+
+if [[ ! -d "$SHOT_DIR" ]]; then
+    log.error "Error: Shot directory $SHOT_DIR does not exist!"
+    remove_lockfile
+fi
+
+if [[ ! -d "$PID_DIR" ]]; then
+    log.error "Error: PID directory $PID_DIR does not exist!"
     remove_lockfile
 fi
 

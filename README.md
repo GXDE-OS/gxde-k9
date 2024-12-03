@@ -35,9 +35,7 @@ K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户
 用法: ./gxde-k9 [选项]
 
 选项:
-  --slimy-dir <路径>     指定监视 .slimy 脚本的目录。
-  --timer-dir <路径>     指定监视 .timer 文件的目录。
-  --shot-dir <路径>      指定监视 .shot 文件的目录。
+  --base-dir <路径>     指定监视 .slimy .timer .shot 脚本的目录。
   --pid-dir <路径>       指定 PID 目录的位置。
   --termux               使用 ${HOME}/gxde-k9/ 作为监视目录，以适配 termux 环境。
   -h                     显示此帮助信息并退出。
@@ -58,12 +56,10 @@ K9是警犬的英文音译（canine）.ca-nine，GXDE-K9是一个简单的用户
 +------------- 分钟 (0 - 59)
 
 
-Usage: ./gxde-k9 [options]
+Usage: $0 [options]
 
 Options:
-  --slimy-dir <path>   Specify the directory to monitor for .slimy scripts.
-  --timer-dir <path>   Specify the directory to monitor for .timer files.
-  --shot-dir <path>    Specify the location for the .shot DIR.
+  --base-dir <path>    Specify the directory to monitor for .slimy .timer .shot scripts.
   --pid-dir <path>     Specify the location for the PID DIR.
   --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   -h                   Show this help message and exit.
@@ -71,8 +67,8 @@ Options:
 Description:
   K9 Lick Daemon gen 2 monitors a specified directory for .slimy scripts
   and executes them. It also supports .timer files with crontab-like schedules.
-  By default, it monitors /usr/share/gxde-k9/slimy/ and /usr/share/gxde-k9/timer/, as well as
-  user-specific directories: /home/shenmo-ikun/.local/share/GXDE/gxde-k9/slimy/ and /home/shenmo-ikun/.local/share/GXDE/gxde-k9/timer/.
+  By default, it monitors $SLIMY_DIR_SYSTEM and $TIMER_DIR_SYSTEM, as well as
+  user-specific directories: $SLIMY_DIR_USER and $TIMER_DIR_USER.
 
 Timer Example:
 * * * * * | <command>
@@ -84,6 +80,7 @@ Timer Example:
 | | +--------- Day of month (1 - 31)
 | +----------- Hour (0 - 23)
 +------------- Minute (0 - 59)
+
 ```
                                                            
 注意：如果是使用root启动，则默认的系统slimy和timer位置为
@@ -118,7 +115,7 @@ Timer Example:
 2. 监控自定义目录并指定 PID 文件：
    
    ```
-   gxde-k9 --slimy-dir /my/slimy/scripts --pid-dir /tmp/mydaemon/
+   gxde-k9 --base-dir /my/slimy/scripts --pid-dir /tmp/mydaemon/
    ```
 3. 在termux上使用：
    
