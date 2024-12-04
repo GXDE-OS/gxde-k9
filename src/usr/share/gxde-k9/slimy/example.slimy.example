@@ -21,15 +21,6 @@ if [[ -n "$DONT_RUN_IF_SYSTEMD_EXIST" ]] && [ -d /run/systemd/system ]; then
     exit 0  # We don't need K9 to take over systemd work if DONT_RUN_IF_SYSTEMD_EXIST
 fi
 
-# 检查目标程序路径是否存在且可执行
-if [[ -x "$TARGET_PROCESS" ]]; then
-    # 如果是有效的可执行文件，使用 realpath 获取绝对路径
-    TARGET_PROCESS=$(realpath "$TARGET_PROCESS" 2>/dev/null || echo "$TARGET_PROCESS")
-else
-    # 如果不是文件，认为是启动指令
-#    echo "[$PROCESS_NAME] 未找到文件，将使用命令：$TARGET_PROCESS"
-    true
-fi
 
 # 确保 PID 文件目录存在
 mkdir -p "$PID_DIR" || {
