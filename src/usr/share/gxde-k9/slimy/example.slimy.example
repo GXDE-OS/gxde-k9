@@ -46,7 +46,7 @@ fi
 
 # 如果 PID 文件不存在或无效，启动目标进程
 echo "[$PROCESS_NAME] 目标进程未运行，正在启动：$TARGET_PROCESS"
-"$TARGET_PROCESS" &
+bash -c "$TARGET_PROCESS" &
 NEW_PID=$!
 if [[ -n "$NEW_PID" && -e "/proc/$NEW_PID" ]]; then
     echo "$NEW_PID" > "$PID_FILE"
