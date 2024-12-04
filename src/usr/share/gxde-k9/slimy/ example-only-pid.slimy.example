@@ -1,0 +1,6 @@
+#!/bin/bash
+PIDS=$(pidof "nginx")
+
+if [ "$PIDS" = "" ]; then
+nginx
+fi
