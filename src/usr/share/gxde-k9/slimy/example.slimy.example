@@ -17,7 +17,7 @@ PROCESS_NAME=$(basename "$0" .slimy)
 
 # ============ 脚本逻辑 ============
 
-if [[ -n "$DONT_RUN_IF_SYSTEMD_EXIST" ]] || [ -d /run/systemd/system ]; then
+if [[ -n "$DONT_RUN_IF_SYSTEMD_EXIST" ]] && [ -d /run/systemd/system ]; then
     exit 0  # We don't need K9 to take over systemd work if DONT_RUN_IF_SYSTEMD_EXIST
 fi
 
