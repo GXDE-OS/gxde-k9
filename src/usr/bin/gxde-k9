@@ -119,7 +119,7 @@ while [[ $# -gt 0 ]]; do
         --termux)
             shift
             BASE_DIR=${HOME}/GXDE/gxde-k9/
-            PID_DIR="${${HOME}}/GXDE/gxde-k9/$UID/"
+            PID_DIR="${HOME}/GXDE/gxde-k9/$UID/"
             LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
             ;;
         -h|--help)
