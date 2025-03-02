@@ -1,4 +1,4 @@
-gxde-k9 (1.5.1) UNRELEASED; urgency=low
+gxde-k9 (1.5.2) UNRELEASED; urgency=low
 
   * Support timer
   * Add Example
@@ -10,5 +10,6 @@ gxde-k9 (1.5.1) UNRELEASED; urgency=low
   * Support root service
   * Support one-shot task
   * Now slimy timer and shot use the same dir
+  * 推送修好的 example
 
  -- shenmo <shenmo@spark-app.store>  Fri, 22 Nov 2024 14:10:55 +0800
