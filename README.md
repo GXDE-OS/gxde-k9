@@ -108,6 +108,12 @@ Timer Example:
 * **`timer` 目录**：存放定时器配置文件 `.timer` 文件
 
 
+例子：
+
+[Shot examples](src/usr/share/gxde-k9/shot)
+[Slimy examples](src/usr/share/gxde-k9/slimy)
+[Edging examples](src/usr/share/gxde-k9/edging)
+[Timer examples](src/usr/share/gxde-k9/timer)
 
 #### **示例**
 
