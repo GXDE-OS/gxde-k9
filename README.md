@@ -96,13 +96,15 @@ Timer Example:
 .
 ├── shot
 ├── slimy
+├── edging
 └── timer
 
 3 directories, 0 files
 ```
 
 * **`shot` 目录**：存放启动时执行一次的`.shot` 文件
-* **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本。
+* **`slimy` 目录**：存放需要自动执行的 `.slimy` 脚本
+* **`edging` 目录**：存放需要保活的 `.edging` 脚本
 * **`timer` 目录**：存放定时器配置文件 `.timer` 文件
 
 
