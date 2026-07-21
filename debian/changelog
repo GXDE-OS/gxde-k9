@@ -1,3 +1,13 @@
+gxde-k9 (1.9.0) UNRELEASED; urgency=low
+
+  * Add task start, stop, enable and disable controls using active and
+    .disabled task file suffixes; stop, disable and remove safely stop
+    associated recorded processes first.
+  * Improve chocker task browsing with enabled/disabled status, task details
+    and an in-place lifecycle action menu; remove redundant TUI show entry.
+
+ -- shenmo <shenmo@spark-app.store>  Tue, 21 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.8.0) UNRELEASED; urgency=low
 
   * gxde-k9-chocker: replace number-driven `select` menus with a full TUI

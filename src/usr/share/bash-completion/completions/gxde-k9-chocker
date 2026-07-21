@@ -7,7 +7,7 @@ _gxde_k9_chocker() {
     _init_completion || return
 
     local categories="slimy timer shot edging"
-    local subcmds="list show add remove import logs status help version"
+    local subcmds="list add start stop enable disable remove import logs status help version"
     local shared_opts="--system --user --yes"
 
     # 第一级参数：子命令
@@ -32,17 +32,15 @@ _gxde_k9_chocker() {
             esac
             ;;
 
-        show)
-            # show <category> <name> [--system|--user]
+        start|stop|enable|disable|remove)
+            # <action> <category> <name> [--system|--user|--yes]；同时补全启用和禁用任务
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
                 return
             fi
-            # 第三个参数补全任务名
             if [[ $cword -eq 3 ]]; then
                 local cat="${words[2]}"
                 local scope="user"
-                # 检查是否有 --system
                 for ((i=3; i<cword; i++)); do
                     [[ "${words[i]}" == "--system" ]] && scope="system"
                 done
@@ -50,9 +48,11 @@ _gxde_k9_chocker() {
                 [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
                 if [[ -d "$dir" ]]; then
                     local files=()
-                    for f in "$dir"/*."$cat"; do
+                    for f in "$dir"/*."$cat" "$dir"/*."$cat".disabled; do
                         [[ -f "$f" ]] || continue
-                        files+=("$(basename "$f" ."$cat")")
+                        local n=$(basename "$f")
+                        n="${n%.${cat}.disabled}"; n="${n%.${cat}}"
+                        files+=("$n")
                     done
                     COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
                 fi

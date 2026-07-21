@@ -7,15 +7,11 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.1.0"
+VERSION="1.9.0"
 
-if [[ "$EUID" -eq 0 ]]; then
-    BASE_DIR_SYSTEM="/usr/share/gxde-k9/system"
-else
-    BASE_DIR_SYSTEM="/usr/share/gxde-k9"
-fi
-BASE_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9"
-LOG_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9/logs/"
+BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
+BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
+LOG_DIR_USER="${GXDE_K9_LOG_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9/logs/}"
 
 # 支持的任务分类
 CATEGORIES=(slimy timer shot edging)
@@ -165,9 +161,9 @@ _refresh_backtitle() {
     local cat f d
     for cat in "${CATEGORIES[@]}"; do
         d=$(category_dir "$cat" user)
-        [[ -d "$d" ]] && while IFS= read -r -d '' f; do user_count=$((user_count+1)); done < <(find "$d" -maxdepth 1 -name "*.$cat" -type f -print0 2>/dev/null)
+        [[ -d "$d" ]] && while IFS= read -r -d '' f; do user_count=$((user_count+1)); done < <(find "$d" -maxdepth 1 \( -name "*.$cat" -o -name "*.$cat.disabled" \) -type f -print0 2>/dev/null)
         d=$(category_dir "$cat" system)
-        [[ -d "$d" ]] && while IFS= read -r -d '' f; do sys_count=$((sys_count+1)); done < <(find "$d" -maxdepth 1 -name "*.$cat" -type f -print0 2>/dev/null)
+        [[ -d "$d" ]] && while IFS= read -r -d '' f; do sys_count=$((sys_count+1)); done < <(find "$d" -maxdepth 1 \( -name "*.$cat" -o -name "*.$cat.disabled" \) -type f -print0 2>/dev/null)
     done
     if [[ -d "$LOG_DIR_USER" ]]; then
         while IFS= read -r -d '' _; do log_count=$((log_count+1)); done < <(find "$LOG_DIR_USER" -name '*.log' -type f -print0 2>/dev/null)
@@ -360,10 +356,13 @@ ${C_DIM}用法:${C_RESET}
   ${PROG_NAME} <子命令> [选项...]
 
 ${C_DIM}子命令:${C_RESET}
-  list       [--category <cat>] [--json]      ${C_GRAY}列出所有任务/配置${C_RESET}
-  show       <category> <name>                ${C_GRAY}查看某个配置内容${C_RESET}
-  add        <category> [选项]                 ${C_GRAY}新增配置${C_RESET}
-  remove     <category> <name>                ${C_GRAY}删除配置${C_RESET}
+  list       [--category <cat>] [--json]      ${C_GRAY}列出任务及启用状态${C_RESET}
+  add        <category> [选项]                 ${C_GRAY}新增已启用任务${C_RESET}
+  start      <category> <name> [--system|--user] [--yes] ${C_GRAY}启用并立即触发任务${C_RESET}
+  stop       <category> <name> [--system|--user] [--yes] ${C_GRAY}停止任务并禁用${C_RESET}
+  enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务${C_RESET}
+  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止任务并禁用${C_RESET}
+  remove     <category> <name> [--system|--user] [--yes] ${C_GRAY}停止并删除配置${C_RESET}
   import     <category> <file> [--name N]     ${C_GRAY}从外部导入脚本${C_RESET}
   logs       <子命令> [...]                    ${C_GRAY}日志查看与导出${C_RESET}
   status                                     ${C_GRAY}查看 K9 守护进程运行状态${C_RESET}
@@ -377,6 +376,12 @@ ${C_DIM}通用选项:${C_RESET}
   --system          操作系统级配置（/usr/share，需提权）
   --yes             跳过交互确认（脚本调用）
   --json            JSON 输出（list 子命令）
+
+${C_DIM}任务状态与停止范围:${C_RESET}
+  启用任务使用 .<category>，禁用任务使用 .<category>.disabled；守护程序仅扫描启用文件。
+  start 会恢复启用后缀并立即触发一次；stop/disable 会先结束 PID_DIR 中记录且仍存活的 PID，
+  并仅额外结束命令行明确引用该任务文件的进程。edging 由守护程序维护 PID；slimy、timer、shot
+  只能可靠停止由 chocker start 记录或显式引用任务文件的进程，不使用无差别 pkill。
 
 ${C_DIM}add 详细:${C_RESET}
   add edging  --name N --target "<cmd>" [--no-systemd]
@@ -406,6 +411,157 @@ ${C_DIM}日志目录:${C_RESET}
 EOF
 }
 
+# ===================== 任务状态与控制 =====================
+valid_category() {
+    local c
+    for c in "${CATEGORIES[@]}"; do [[ "$c" == "$1" ]] && return 0; done
+    return 1
+}
+
+task_paths() {
+    local cat="$1" name="$2" scope="$3" d
+    d=$(category_dir "$cat" "$scope")
+    TASK_ENABLED="${d}${name}.${cat}"
+    TASK_DISABLED="${TASK_ENABLED}.disabled"
+}
+
+pid_file_for() {
+    local cat="$1" name="$2"
+    local d="/tmp/GXDE/gxde-k9/$UID"
+    printf '%s/%s.pid' "$d" "$name"
+}
+
+parse_task_action() {
+    ACTION_CAT="" ACTION_NAME="" ACTION_SCOPE="user" ACTION_YES=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --system) ACTION_SCOPE="system";;
+            --user) ACTION_SCOPE="user";;
+            --yes) ACTION_YES=1;;
+            *)
+                if [[ -z "$ACTION_CAT" ]]; then ACTION_CAT="$1"
+                elif [[ -z "$ACTION_NAME" ]]; then ACTION_NAME="$1"
+                else log.error "多余参数: $1"; return 2; fi;;
+        esac
+        shift
+    done
+    [[ -n "$ACTION_CAT" && -n "$ACTION_NAME" ]] || { log.error "需要参数 <category> <name>"; return 2; }
+    valid_category "$ACTION_CAT" || { log.error "未知分类: $ACTION_CAT"; return 2; }
+}
+
+elevate_task_action() {
+    local action="$1"; shift
+    [[ "$ACTION_SCOPE" != "system" || "$EUID" -eq 0 ]] && return 1
+    if [[ "$ACTION_YES" -eq 0 ]]; then
+        confirm_system_change || { log.warn "已取消"; return 2; }
+    fi
+    local elev
+    elev=$(elevate_cmd)
+    [[ -n "$elev" ]] || { log.error "未找到 pkexec/sudo，无法提权修改系统配置"; return 2; }
+    exec "$elev" "$0" "$action" "$ACTION_CAT" "$ACTION_NAME" --system --yes
+}
+
+cmd_enable_disable() {
+    local action="$1"; shift
+    parse_task_action "$@" || exit $?
+    elevate_task_action "$action"; local elevated=$?
+    [[ $elevated -eq 0 ]] && return
+    [[ $elevated -eq 2 ]] && exit 1
+    task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
+    if [[ "$action" == "disable" ]]; then
+        [[ -f "$TASK_ENABLED" ]] || { [[ -f "$TASK_DISABLED" ]] && { log.ok "任务已禁用"; return; }; log.error "找不到任务: $TASK_ENABLED"; exit 1; }
+        stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
+        mv -- "$TASK_ENABLED" "$TASK_DISABLED"
+    else
+        [[ -f "$TASK_DISABLED" ]] || { [[ -f "$TASK_ENABLED" ]] && { log.ok "任务已启用"; return; }; log.error "找不到任务: $TASK_DISABLED"; exit 1; }
+        mv -- "$TASK_DISABLED" "$TASK_ENABLED"
+    fi
+    log.ok "已${action} $(tag_scope "$ACTION_SCOPE")/$(tag_category "$ACTION_CAT") $ACTION_NAME"
+}
+
+pid_is_active() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+stop_task_processes() {
+    local cat="$1" name="$2" enabled_file="$3" pidfile pid proc cmdline
+    pidfile=$(pid_file_for "$cat" "$name")
+    if [[ -f "$pidfile" ]]; then
+        pid=$(<"$pidfile")
+        if pid_is_active "$pid"; then
+            kill "$pid" 2>/dev/null || log.warn "无法结束 PID=$pid"
+        else
+            log.warn "忽略过期 PID 文件: $pidfile"
+        fi
+        rm -f -- "$pidfile"
+    fi
+    for proc in /proc/[0-9]*; do
+        [[ -r "$proc/cmdline" ]] || continue
+        pid=${proc##*/}
+        cmdline=$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null)
+        [[ "$cmdline" == *"$enabled_file"* ]] || continue
+        [[ "$pid" == "$$" ]] && continue
+        kill "$pid" 2>/dev/null || log.warn "无法结束关联 PID=$pid"
+    done
+}
+
+cmd_start() {
+    parse_task_action "$@" || exit $?
+    elevate_task_action start; local elevated=$?
+    [[ $elevated -eq 0 ]] && return
+    [[ $elevated -eq 2 ]] && exit 1
+    task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
+    if [[ -f "$TASK_DISABLED" ]]; then
+        mv -- "$TASK_DISABLED" "$TASK_ENABLED"
+        log.info "已启用任务"
+    fi
+    [[ -f "$TASK_ENABLED" ]] || { log.error "任务不存在: $TASK_ENABLED"; exit 1; }
+    local pidfile pid command
+    pidfile=$(pid_file_for "$ACTION_CAT" "$ACTION_NAME")
+    if [[ -f "$pidfile" ]]; then
+        pid=$(<"$pidfile")
+        if pid_is_active "$pid"; then log.warn "任务已在运行 (PID=$pid)"; return; fi
+        rm -f -- "$pidfile"
+    fi
+    mkdir -p "$(dirname "$pidfile")"
+    case "$ACTION_CAT" in
+        edging)
+            command=$(bash -c 'source "$1"; printf "%s" "$TARGET_PROCESS"' _ "$TASK_ENABLED")
+            [[ -n "$command" ]] || { log.error "edging 配置未定义 TARGET_PROCESS"; exit 1; }
+            bash -c 'source "$1"; bash -c "$TARGET_PROCESS" & child=$!; trap "kill \"$child\" 2>/dev/null; exit" TERM INT; wait "$child"' _ "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
+            ;;
+        timer)
+            bash -c 'while IFS= read -r line; do [[ -z "$line" || "$line" == \#* ]] && continue; command=${line#*|}; [[ "$command" != "$line" ]] && bash -c "$command"; done < "$1"' _ "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
+            ;;
+        slimy|shot)
+            bash "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
+            ;;
+    esac
+    [[ -n "$pid" && -d "/proc/$pid" ]] || { log.error "任务启动失败"; exit 1; }
+    printf '%s\n' "$pid" > "$pidfile"
+    log.ok "已启动 $(tag_category "$ACTION_CAT") $ACTION_NAME (PID=$pid)"
+}
+
+cmd_stop() {
+    parse_task_action "$@" || exit $?
+    elevate_task_action stop; local elevated=$?
+    [[ $elevated -eq 0 ]] && return
+    [[ $elevated -eq 2 ]] && exit 1
+    task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
+    [[ -f "$TASK_ENABLED" || -f "$TASK_DISABLED" ]] || { log.error "任务不存在: $TASK_ENABLED 或 $TASK_DISABLED"; exit 1; }
+    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
+    if [[ -f "$TASK_ENABLED" ]]; then
+        mv -- "$TASK_ENABLED" "$TASK_DISABLED"
+        log.ok "已停止并禁用 $(tag_category "$ACTION_CAT") $ACTION_NAME"
+    elif [[ -f "$TASK_DISABLED" ]]; then
+        log.ok "任务已停止且处于禁用状态"
+    else
+        log.error "任务不存在: $TASK_ENABLED 或 $TASK_DISABLED"
+        exit 1
+    fi
+}
+
 # ===================== list 子命令 =====================
 cmd_list() {
     local filter_cat="" json=0
@@ -428,9 +584,17 @@ cmd_list() {
             local d
             d=$(category_dir "$cat" "$scope")
             [[ -d "$d" ]] || continue
-            for f in "$d"/*."$cat"; do
+            for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
                 [[ -e "$f" ]] || continue
-                items+=("$cat|$scope|$(basename "$f" ."$cat")|$f")
+                local n state
+                if [[ "$f" == *.disabled ]]; then
+                    n=$(basename "$f" ".${cat}.disabled")
+                    state="禁用"
+                else
+                    n=$(basename "$f" ".${cat}")
+                    state="启用"
+                fi
+                items+=("$cat|$scope|$n|$state|$f")
             done
         done
     done
@@ -443,7 +607,7 @@ cmd_list() {
     fi
 
     echo
-    local w=72
+    local w=82
     box_title "任务列表" $w
 
     # ┌──────┬──────────────┬──────┬────┐
@@ -451,6 +615,8 @@ cmd_list() {
     printf "${C_BOLD}%-6s${C_RESET}" "分类"
     printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
     printf "${C_BOLD}%-22s${C_RESET}" "名称"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-6s${C_RESET}" "状态"
     printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
     printf "${C_BOLD}%-5s${C_RESET}" "来源"
     printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
@@ -461,11 +627,13 @@ cmd_list() {
     hline $w
 
     for item in "${items[@]}"; do
-        IFS='|' read -r cat scope name path <<< "$item"
+        IFS='|' read -r cat scope name state path <<< "$item"
         printf "${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
         tag_category "$cat"
         printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
         printf "${C_BOLD}%-22s${C_RESET}" "$name"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "%-6s" "$state"
         printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
         tag_scope "$scope"
         printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
@@ -489,12 +657,12 @@ cmd_list_json() {
             local d
             d=$(category_dir "$cat" "$scope")
             [[ -d "$d" ]] || continue
-            for f in "$d"/*."$cat"; do
+            for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
                 [[ -e "$f" ]] || continue
-                local n
-                n=$(basename "$f" ."$cat")
+                local n state
+                if [[ "$f" == *.disabled ]]; then n=$(basename "$f" ".${cat}.disabled"); state="disabled"; else n=$(basename "$f" ".${cat}"); state="enabled"; fi
                 [[ $first -eq 1 ]] || echo ","
-                printf '    {"category":"%s","name":"%s","scope":"%s","path":"%s"}' "$cat" "$n" "$scope" "$f"
+                printf '    {"category":"%s","name":"%s","scope":"%s","state":"%s","path":"%s"}' "$cat" "$n" "$scope" "$state" "$f"
                 first=0
             done
         done
@@ -523,6 +691,7 @@ cmd_show() {
     local d f
     d=$(category_dir "$cat" "$scope")
     f="${d}${name}.${cat}"
+    [[ -f "$f" ]] || f="${f}.disabled"
     if [[ ! -f "$f" ]]; then
         log.error "找不到配置: $f"
         exit 1
@@ -652,45 +821,17 @@ validate_cron() {
 
 # ===================== remove 子命令 =====================
 cmd_remove() {
-    local cat="" name="" scope="user" yes=0
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --system) scope="system";;
-            --user)   scope="user";;
-            --yes) yes=1;;
-            *)
-                if [[ -z "$cat" ]]; then cat="$1"
-                elif [[ -z "$name" ]]; then name="$1"
-                else log.error "remove: 多余参数 $1"; exit 2; fi;;
-        esac
-        shift
-    done
-    [[ -z "$cat" || -z "$name" ]] && { log.error "remove 需要参数 <category> <name>"; exit 2; }
-
-    local d f
-    d=$(category_dir "$cat" "$scope")
-    f="${d}${name}.${cat}"
-
-    if [[ ! -e "$f" ]]; then
-        log.error "不存在: $f"
-        exit 1
-    fi
-
-    if [[ "$scope" == "system" ]]; then
-        if [[ $yes -eq 0 ]]; then
-            confirm_system_change || { log.warn "已取消"; exit 1; }
-        fi
-        local elev
-        elev=$(elevate_cmd)
-        if [[ -z "$elev" ]]; then
-            log.error "未找到 pkexec/sudo，无法提权修改系统配置"
-            exit 1
-        fi
-        exec $elev "$0" remove "$cat" "$name" --system --yes
-    fi
-
-    rm -f "$f"
-    log.ok "已删除 $(tag_scope "$scope")/$(tag_category "$cat") $name"
+    parse_task_action "$@" || exit $?
+    elevate_task_action remove; local elevated=$?
+    [[ $elevated -eq 0 ]] && return
+    [[ $elevated -eq 2 ]] && exit 1
+    task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
+    local target="$TASK_ENABLED"
+    [[ -e "$target" ]] || target="$TASK_DISABLED"
+    [[ -e "$target" ]] || { log.error "不存在: $TASK_ENABLED 或 $TASK_DISABLED"; exit 1; }
+    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
+    rm -f -- "$TASK_ENABLED" "$TASK_DISABLED"
+    log.ok "已删除 $(tag_scope "$ACTION_SCOPE")/$(tag_category "$ACTION_CAT") $ACTION_NAME"
 }
 
 # ===================== import 子命令 =====================
@@ -981,13 +1122,13 @@ pick_task() {
     [[ -d "$d" ]] || { tui_msgbox "错误" "目录不存在: $d"; return 1; }
 
     local items=()
-    local f n sz mtime
-    for f in "$d"/*."$cat"; do
+    local f n sz mtime state
+    for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
         [[ -f "$f" ]] || continue
-        n=$(basename "$f" ."$cat")
+        if [[ "$f" == *.disabled ]]; then n=$(basename "$f" ".${cat}.disabled"); state="已禁用"; else n=$(basename "$f" ."$cat"); state="已启用"; fi
         sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
         mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
-        items+=("$n" "$(numfmt_size "$sz")  |  $mtime")
+        items+=("$n" "$state  $(numfmt_size "$sz")  |  $mtime")
     done
 
     if [[ ${#items[@]} -eq 0 ]]; then
@@ -1006,12 +1147,12 @@ pick_task_multi() {
     [[ -d "$d" ]] || { tui_msgbox "错误" "目录不存在: $d"; return 1; }
 
     local items=()
-    local f n mtime
-    for f in "$d"/*."$cat"; do
+    local f n mtime state
+    for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
         [[ -f "$f" ]] || continue
-        n=$(basename "$f" ."$cat")
+        if [[ "$f" == *.disabled ]]; then n=$(basename "$f" ".${cat}.disabled"); state="已禁用"; else n=$(basename "$f" ."$cat"); state="已启用"; fi
         mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
-        items+=("$n" "$mtime" "off")
+        items+=("$n" "$state  $mtime" "off")
     done
 
     if [[ ${#items[@]} -eq 0 ]]; then
@@ -1183,7 +1324,8 @@ interactive_remove() {
 # ---------------------------------------------------------------
 # 展示单个任务的完整信息（元信息 + 文件内容），用滚动 textbox 放大显示
 _show_task_detail() {
-    local cat="$1" scope="$2" name="$3" f="$4"
+    local cat="$1" scope="$2" name="$3" f="$4" state="已启用"
+    [[ "$f" == *.disabled ]] && state="已禁用"
     if [[ ! -f "$f" ]]; then
         tui_msgbox "错误" "找不到配置:\n$f"
         return 1
@@ -1196,6 +1338,7 @@ _show_task_detail() {
         echo "分类:   $cat"
         echo "名称:   $name"
         echo "来源:   $scope"
+        echo "状态:   $state"
         echo "路径:   $f"
         echo "大小:   $(stat -c%s "$f" 2>/dev/null || echo '?') bytes"
         echo "修改:   $(stat -c%y "$f" 2>/dev/null | cut -d. -f1)"
@@ -1224,60 +1367,41 @@ interactive_show() {
 #  交互式列表 —— 每条任务一项，上下选中后放大查看详情
 # ---------------------------------------------------------------
 interactive_list() {
-    local mode
-    mode=$(tui_menu "列出任务" "请选择列出方式" \
-        "all"    "列出所有分类" \
-        "filter" "按分类过滤") || return
-
-    local filter_cat=""
-    if [[ "$mode" == "filter" ]]; then
-        filter_cat=$(pick_category "选择分类") || return
-    fi
-
-    # 收集所有任务，构建菜单项
-    # tag 形如 "cat|scope|name"（用 | 分隔以便后续拆分，避免与 name 中的 / 冲突）
-    local items=()
-    local cat scope f n sz mtime
-    for cat in "${CATEGORIES[@]}"; do
-        [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
-        for scope in user system; do
-            local d
-            d=$(category_dir "$cat" "$scope")
-            [[ -d "$d" ]] || continue
-            for f in "$d"/*."$cat"; do
-                [[ -f "$f" ]] || continue
-                n=$(basename "$f" ."$cat")
-                sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
-                mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
-                local scope_tag="user"
-                [[ "$scope" == "system" ]] && scope_tag="sys "
-                items+=("${cat}|${scope}|${n}" "${scope_tag}  $(numfmt_size "$sz")  ${mtime}  ${n}")
+    local mode filter_cat=""
+    mode=$(tui_menu "列出任务" "请选择列出方式" "all" "列出所有分类" "filter" "按分类过滤") || return
+    [[ "$mode" == "filter" ]] && filter_cat=$(pick_category "选择分类") || true
+    while true; do
+        local items=() cat scope d f n state sz mtime sel rest s_cat s_scope s_name s_file
+        for cat in "${CATEGORIES[@]}"; do
+            [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
+            for scope in user system; do
+                d=$(category_dir "$cat" "$scope")
+                [[ -d "$d" ]] || continue
+                for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
+                    [[ -f "$f" ]] || continue
+                    if [[ "$f" == *.disabled ]]; then n=$(basename "$f" ".${cat}.disabled"); state="已禁用"; else n=$(basename "$f" ".${cat}"); state="已启用"; fi
+                    sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+                    mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+                    items+=("${cat}|${scope}|${n}" "${state}  ${scope}  $(numfmt_size "$sz")  ${mtime}")
+                done
             done
         done
-    done
-
-    if [[ ${#items[@]} -eq 0 ]]; then
-        tui_msgbox "无任务" "当前没有可显示的任务配置"
-        return
-    fi
-
-    # 循环选择 -> 查看详情 -> 返回列表
-    local title="任务列表"
-    [[ -n "$filter_cat" ]] && title="$filter_cat 任务列表"
-    while true; do
-        local sel
-        sel=$(tui_menu "$title" "共 $(( ${#items[@]} / 2 )) 项  ↑↓ 选择  回车查看详情  ESC 返回" "${items[@]}") || return
-
-        # 解析 sel: "cat|scope|name"
-        local s_cat s_scope s_name s_file
-        s_cat="${sel%%|*}"
-        local rest="${sel#*|}"
-        s_scope="${rest%%|*}"
-        s_name="${rest#*|}"
-        s_file=$(category_dir "$s_cat" "$s_scope")
-        s_file="${s_file}${s_name}.${s_cat}"
-
-        _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
+        [[ ${#items[@]} -gt 0 ]] || { tui_msgbox "无任务" "当前没有可显示的任务配置"; return; }
+        sel=$(tui_menu "任务列表" "共 $(( ${#items[@]} / 2 )) 项；选择任务查看详情和操作" "${items[@]}") || return
+        s_cat="${sel%%|*}"; rest="${sel#*|}"; s_scope="${rest%%|*}"; s_name="${rest#*|}"
+        while true; do
+            task_paths "$s_cat" "$s_name" "$s_scope"
+            [[ -f "$TASK_ENABLED" ]] && s_file="$TASK_ENABLED" || s_file="$TASK_DISABLED"
+            _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
+            local action
+            action=$(tui_menu "$s_cat / $s_name" "当前状态：$([[ -f "$TASK_ENABLED" ]] && echo 已启用 || echo 已禁用)" "start" "启动（同时启用）" "stop" "停止并禁用" "enable" "仅启用" "disable" "停止并禁用" "remove" "停止并删除" "back" "返回任务列表") || break
+            [[ "$action" == "back" ]] && break
+            if [[ "$action" == "remove" ]] && ! tui_yesno "确认删除" "删除 $s_cat / $s_name？此操作不可撤销。"; then continue; fi
+            local args=("$action" "$s_cat" "$s_name")
+            [[ "$s_scope" == "system" ]] && args+=(--system)
+            "$0" "${args[@]}"
+            [[ "$action" == "remove" ]] && break
+        done
     done
 }
 
@@ -1394,8 +1518,7 @@ interactive_menu() {
         _refresh_backtitle
         local choice
         choice=$(tui_menu "GXDE K9 Chocker — 主菜单" "↑↓ 移动  回车 确认  ESC 退出" \
-            "list"    "列出任务/配置" \
-            "show"    "查看配置内容" \
+            "list"    "浏览任务、详情与启停操作" \
             "add"     "新增配置" \
             "import"  "从外部导入脚本" \
             "remove"  "删除配置（支持批量）" \
@@ -1409,7 +1532,6 @@ interactive_menu() {
 
         case "$choice" in
             list)    interactive_list;;
-            show)    interactive_show;;
             add)     interactive_add;;
             import)  interactive_import;;
             remove)  interactive_remove;;
@@ -1437,6 +1559,10 @@ main() {
         list)     shift; cmd_list "$@";;
         show)     shift; cmd_show "$@";;
         add)      shift; cmd_add "$@";;
+        start)    shift; cmd_start "$@";;
+        stop)     shift; cmd_stop "$@";;
+        enable)   shift; cmd_enable_disable enable "$@";;
+        disable)  shift; cmd_enable_disable disable "$@";;
         remove)   shift; cmd_remove "$@";;
         import)   shift; cmd_import "$@";;
         _import_as_root) shift; cmd__import_as_root "$@";;

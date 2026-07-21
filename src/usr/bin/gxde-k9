@@ -5,7 +5,7 @@ log.error()  { echo -e "[\e[31mERROR\e[0m]: \e[1m$*\e[0m"; }
 log.info() { echo -e "[\e[96mINFO\e[0m]:  \e[1m$*\e[0m"; }
 log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 
-VERSION="1.0.1"
+VERSION="1.9.0"
 
 # 默认目录
 # 判断当前用户是否为 root
@@ -35,7 +35,7 @@ print_help() {
 Usage: $0 [options]
 
 Options:
-  --base-dir <path>    Specify the directory to monitor for .slimy .timer .shot scripts.
+  --base-dir <path>    Specify the directory to monitor for active .slimy .timer .shot .edging tasks; *.disabled is ignored.
   --pid-dir <path>     Specify the location for the PID DIR.
   --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
   --log-dir <path>     Specify the log directory (default: ~/.local/share/GXDE/gxde-k9/logs/).
@@ -570,7 +570,7 @@ run_edging_scripts(){
     execute_edging_scripts_in_dir "$EDGING_DIR"
 
     # 如果用户目录存在，也执行其中的脚本
-    if [[ -n "$SHOT_DIR_USER" ]]; then
+    if [[ -n "$EDGING_DIR_USER" ]]; then
         execute_edging_scripts_in_dir "$EDGING_DIR_USER"
     fi
 
