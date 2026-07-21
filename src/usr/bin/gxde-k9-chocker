@@ -175,19 +175,30 @@ _refresh_backtitle() {
     _BACKTITLE="GXDE K9 Chocker v${VERSION}   |   配置: ${user_count} user / ${sys_count} system   |   日志: ${log_count} 个"
 }
 
-# 计算最佳尺寸：返回 "h w"
+# 计算菜单/对话框尺寸：返回 "h w"
+# items = 菜单项数；宽度上限放宽到 140，尽量占满终端
 _tui_size() {
     local items=${1:-0}
     local h w
     h=$(tput lines 2>/dev/null || echo 24)
     w=$(tput cols 2>/dev/null || echo 80)
-    (( w > 88 )) && w=88
+    (( w > 140 )) && w=140
     (( w < 60 )) && w=60
-    # 至少需要 items + 7 行；至多留 2 行外边距
+    # 高度：items + 7，但不超过终端高度 - 2，至少 8
     local need=$(( items + 7 ))
     (( need > h - 2 )) && need=$(( h - 2 ))
     (( need < 8 )) && need=8
     echo "$need $w"
+}
+
+# 计算详情/大文本展示尺寸：尽量占满终端（留 2 行/2 列边距）
+_tui_size_full() {
+    local h w
+    h=$(tput lines 2>/dev/null || echo 24)
+    w=$(tput cols 2>/dev/null || echo 80)
+    (( h > 4 )) && h=$(( h - 2 ))
+    (( w > 4 )) && w=$(( w - 2 ))
+    echo "$h $w"
 }
 
 # 统一调用底层工具；用 3>&1 1>&2 2>&3 把 stdout 让给选择结果
@@ -250,11 +261,11 @@ tui_msgbox() {
     _tui_run --backtitle "${_BACKTITLE}" --title "$title" --msgbox "$text" "$h" "$w"
 }
 
-# tui_textbox <title> <file>  滚动查看文本文件
+# tui_textbox <title> <file>  滚动查看文本文件（尽量占满终端）
 tui_textbox() {
     local title="$1" file="$2"
     local h w
-    read -r h w < <(_tui_size 0)
+    read -r h w < <(_tui_size_full)
     if [[ "$TUI_BACKEND" == "dialog" ]]; then
         dialog --backtitle "${_BACKTITLE}" --title "$title" --textbox "$file" "$h" "$w"
     else
@@ -1010,12 +1021,13 @@ pick_task_multi() {
     tui_checklist "批量选择 $cat 任务" "空格 切换选中  回车 确认  ESC 取消\n来源: $scope" "${items[@]}"
 }
 
-# pick_log_task: 从 logs 目录选择任务; stdout -> "cat name"; rc=1 取消
+# pick_log_task: 从 logs 目录选择任务; stdout -> "cat|name"; rc=1 取消
+# 用 | 分隔以便后续拆分（任务名本身可能含 / 或空格）
 pick_log_task() {
     [[ -d "$LOG_DIR_USER" ]] || { tui_msgbox "无日志" "日志目录不存在:\n$LOG_DIR_USER"; return 1; }
 
     local items=()
-    local cat_dir cat f n sz
+    local cat_dir cat f n sz mtime
     for cat_dir in "$LOG_DIR_USER"*/; do
         [[ -d "$cat_dir" ]] || continue
         cat=$(basename "$cat_dir")
@@ -1023,7 +1035,8 @@ pick_log_task() {
             [[ -f "$f" ]] || continue
             n=$(basename "$f" .log)
             sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
-            items+=("${cat}/${n}" "$(numfmt_size "$sz")")
+            mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+            items+=("${cat}|${n}" "$(numfmt_size "$sz")  ${mtime}  ${cat}/${n}")
         done
     done
 
@@ -1032,10 +1045,7 @@ pick_log_task() {
         return 1
     fi
 
-    local sel
-    sel=$(tui_menu "选择日志" "↑↓ 移动  回车 查看" "${items[@]}") || return 1
-    # sel 形如 "cat/name"
-    echo "${sel%%/*} ${sel#*/}"
+    tui_menu "选择日志" "共 $(( ${#items[@]} / 2 )) 项  ↑↓ 移动  回车 查看  ESC 取消" "${items[@]}"
 }
 
 # ---------------------------------------------------------------
@@ -1171,25 +1181,18 @@ interactive_remove() {
 # ---------------------------------------------------------------
 #  交互式查看配置
 # ---------------------------------------------------------------
-interactive_show() {
-    local cat scope name
-    cat=$(pick_category "查看配置 - 选择分类") || return
-    scope=$(pick_scope "查看 $cat - 选择来源") || return
-    name=$(pick_task "$cat" "$scope") || return
-
-    local d f
-    d=$(category_dir "$cat" "$scope")
-    f="${d}${name}.${cat}"
+# 展示单个任务的完整信息（元信息 + 文件内容），用滚动 textbox 放大显示
+_show_task_detail() {
+    local cat="$1" scope="$2" name="$3" f="$4"
     if [[ ! -f "$f" ]]; then
         tui_msgbox "错误" "找不到配置:\n$f"
-        return
+        return 1
     fi
 
-    # 构造临时文件：元信息 + 内容
     local tmp
     tmp=$(mktemp /tmp/k9-show-XXXXXX.txt)
     {
-        echo "================== 配置元信息 =================="
+        echo "================== 配置信息 =================="
         echo "分类:   $cat"
         echo "名称:   $name"
         echo "来源:   $scope"
@@ -1201,86 +1204,169 @@ interactive_show() {
         cat "$f"
         echo "==============================================="
     } > "$tmp"
-    tui_textbox "$cat / $name" "$tmp"
+    tui_textbox "$cat / $name ($scope)" "$tmp"
     rm -f "$tmp"
 }
 
+interactive_show() {
+    local cat scope name
+    cat=$(pick_category "查看配置 - 选择分类") || return
+    scope=$(pick_scope "查看 $cat - 选择来源") || return
+    name=$(pick_task "$cat" "$scope") || return
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+    _show_task_detail "$cat" "$scope" "$name" "$f"
+}
+
 # ---------------------------------------------------------------
-#  交互式列表
+#  交互式列表 —— 每条任务一项，上下选中后放大查看详情
 # ---------------------------------------------------------------
 interactive_list() {
     local mode
     mode=$(tui_menu "列出任务" "请选择列出方式" \
         "all"    "列出所有分类" \
-        "filter" "按分类过滤" \
-        "json"   "JSON 输出（全部）" \
-        "json1"  "JSON 输出（按分类）") || return
+        "filter" "按分类过滤") || return
 
-    case "$mode" in
-        all)
-            "$0" list | tui_show_stdin "任务列表"
-            ;;
-        filter)
-            local cat
-            cat=$(pick_category "选择分类") || return
-            "$0" list --category "$cat" | tui_show_stdin "$cat 任务列表"
-            ;;
-        json)
-            "$0" list --json | tui_show_stdin "任务列表 JSON"
-            ;;
-        json1)
-            local cat
-            cat=$(pick_category "选择分类") || return
-            "$0" list --category "$cat" --json | tui_show_stdin "$cat 任务列表 JSON"
-            ;;
-    esac
+    local filter_cat=""
+    if [[ "$mode" == "filter" ]]; then
+        filter_cat=$(pick_category "选择分类") || return
+    fi
+
+    # 收集所有任务，构建菜单项
+    # tag 形如 "cat|scope|name"（用 | 分隔以便后续拆分，避免与 name 中的 / 冲突）
+    local items=()
+    local cat scope f n sz mtime
+    for cat in "${CATEGORIES[@]}"; do
+        [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
+        for scope in user system; do
+            local d
+            d=$(category_dir "$cat" "$scope")
+            [[ -d "$d" ]] || continue
+            for f in "$d"/*."$cat"; do
+                [[ -f "$f" ]] || continue
+                n=$(basename "$f" ."$cat")
+                sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+                mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+                local scope_tag="user"
+                [[ "$scope" == "system" ]] && scope_tag="sys "
+                items+=("${cat}|${scope}|${n}" "${scope_tag}  $(numfmt_size "$sz")  ${mtime}  ${n}")
+            done
+        done
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        tui_msgbox "无任务" "当前没有可显示的任务配置"
+        return
+    fi
+
+    # 循环选择 -> 查看详情 -> 返回列表
+    local title="任务列表"
+    [[ -n "$filter_cat" ]] && title="$filter_cat 任务列表"
+    while true; do
+        local sel
+        sel=$(tui_menu "$title" "共 $(( ${#items[@]} / 2 )) 项  ↑↓ 选择  回车查看详情  ESC 返回" "${items[@]}") || return
+
+        # 解析 sel: "cat|scope|name"
+        local s_cat s_scope s_name s_file
+        s_cat="${sel%%|*}"
+        local rest="${sel#*|}"
+        s_scope="${rest%%|*}"
+        s_name="${rest#*|}"
+        s_file=$(category_dir "$s_cat" "$s_scope")
+        s_file="${s_file}${s_name}.${s_cat}"
+
+        _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
+    done
 }
 
 # ---------------------------------------------------------------
 #  交互式日志管理
+#  与任务列表同一逻辑：列出所有日志，上下选中后用 textbox 放大查看。
 # ---------------------------------------------------------------
+
+# 放大展示某个日志文件（元信息 + 内容）
+_show_log_detail() {
+    local cat="$1" name="$2" f="$3"
+    if [[ ! -f "$f" ]]; then
+        tui_msgbox "错误" "找不到日志:\n$f"
+        return 1
+    fi
+
+    local tmp
+    tmp=$(mktemp /tmp/k9-log-XXXXXX.txt)
+    {
+        echo "================== 日志信息 =================="
+        echo "分类:   $cat"
+        echo "任务:   $name"
+        echo "路径:   $f"
+        echo "大小:   $(stat -c%s "$f" 2>/dev/null || echo '?') bytes"
+        echo "修改:   $(stat -c%y "$f" 2>/dev/null | cut -d. -f1)"
+        echo "================== 日志内容 =================="
+        cat "$f"
+        echo "==============================================="
+    } > "$tmp"
+    tui_textbox "日志: $cat/$name" "$tmp"
+    rm -f "$tmp"
+}
+
+# 收集所有日志、上下选中查看（与 interactive_list 的循环结构一致）
+_logs_browse() {
+    [[ -d "$LOG_DIR_USER" ]] || { tui_msgbox "无日志" "日志目录不存在:\n$LOG_DIR_USER"; return 1; }
+
+    local items=()
+    local cat_dir cat f n sz mtime
+    for cat_dir in "$LOG_DIR_USER"*/; do
+        [[ -d "$cat_dir" ]] || continue
+        cat=$(basename "$cat_dir")
+        for f in "$cat_dir"*.log; do
+            [[ -f "$f" ]] || continue
+            n=$(basename "$f" .log)
+            sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+            items+=("${cat}|${n}" "$(numfmt_size "$sz")  ${mtime}  ${cat}/${n}")
+        done
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        tui_msgbox "无日志" "尚未产生任何任务日志"
+        return
+    fi
+
+    while true; do
+        local sel
+        sel=$(tui_menu "任务日志" "共 $(( ${#items[@]} / 2 )) 项  ↑↓ 选择  回车查看详情  ESC 返回" "${items[@]}") || return
+
+        # 解析 sel: "cat|name"
+        local s_cat s_name s_file
+        s_cat="${sel%%|*}"
+        s_name="${sel#*|}"
+        s_file="${LOG_DIR_USER}${s_cat}/${s_name}.log"
+
+        _show_log_detail "$s_cat" "$s_name" "$s_file"
+    done
+}
+
 interactive_logs() {
     while true; do
         local sub
         sub=$(tui_menu "日志管理" "请选择操作" \
-            "list"   "列出所有日志" \
-            "show"   "查看某任务日志" \
+            "browse" "浏览/查看日志" \
             "export" "导出日志" \
             "clear"  "清空所有日志" \
             "back"   "返回主菜单") || return
 
         case "$sub" in
-            list)
-                "$0" logs list | tui_show_stdin "任务日志"
-                ;;
-            show)
-                local sel cat name f
-                sel=$(pick_log_task) || continue
-                cat="${sel%% *}"
-                name="${sel#* }"
-                f="${LOG_DIR_USER}${cat}/${name}.log"
-                [[ -f "$f" ]] || { tui_msgbox "错误" "找不到日志:\n$f"; continue; }
-                local tmp
-                tmp=$(mktemp /tmp/k9-log-XXXXXX.txt)
-                {
-                    echo "================== 日志信息 =================="
-                    echo "分类:   $cat"
-                    echo "任务:   $name"
-                    echo "路径:   $f"
-                    echo "大小:   $(stat -c%s "$f" 2>/dev/null || echo '?') bytes"
-                    echo "修改:   $(stat -c%y "$f" 2>/dev/null | cut -d. -f1)"
-                    echo "================== 日志内容 =================="
-                    cat "$f"
-                    echo "==============================================="
-                } > "$tmp"
-                tui_textbox "日志: $cat/$name" "$tmp"
-                rm -f "$tmp"
+            browse)
+                _logs_browse
                 ;;
             export)
                 local sel cat name dest
                 sel=$(pick_log_task) || continue
-                cat="${sel%% *}"
-                name="${sel#* }"
+                # sel 形如 "cat|name"
+                cat="${sel%%|*}"
+                name="${sel#*|}"
                 dest=$(tui_inputbox "导出路径" "请输入导出目标文件路径" "$HOME/${cat}-${name}.log") || continue
                 "$0" logs export "$cat" "$name" "$dest"
                 tui_msgbox "完成" "导出完成，按回车返回"
