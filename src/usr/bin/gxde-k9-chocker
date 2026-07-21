@@ -18,16 +18,16 @@ CATEGORIES=(slimy timer shot edging)
 
 # ===================== 样式定义 =====================
 # 颜色（用于命令行输出；TUI 内部由 whiptail/dialog 自行配色）
-C_RED='\e[31m'
-C_GREEN='\e[32m'
-C_YELLOW='\e[33m'
-C_BLUE='\e[34m'
-C_MAGENTA='\e[35m'
-C_CYAN='\e[36m'
-C_GRAY='\e[90m'
-C_DIM='\e[2m'
-C_BOLD='\e[1m'
-C_RESET='\e[0m'
+C_RED=$'\e[31m'
+C_GREEN=$'\e[32m'
+C_YELLOW=$'\e[33m'
+C_BLUE=$'\e[34m'
+C_MAGENTA=$'\e[35m'
+C_CYAN=$'\e[36m'
+C_GRAY=$'\e[90m'
+C_DIM=$'\e[2m'
+C_BOLD=$'\e[1m'
+C_RESET=$'\e[0m'
 
 # 制表符
 T_TOP="╭" T_TB="─" T_TJ="┬" T_TE="╮"
