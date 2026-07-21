@@ -1451,9 +1451,21 @@ interactive_list() {
                 continue
             fi
             if [[ "$action" == "status" ]]; then
-                local status_args=(status "$s_cat" "$s_name")
-                [[ "$s_scope" == "system" ]] && status_args+=(--system)
-                "$0" "${status_args[@]}" | tui_show_stdin "任务状态"
+                local status_action
+                status_action=$(tui_menu "任务状态" "$s_cat / $s_name" \
+                    "view" "查看状态" \
+                    "logs" "查看任务日志" \
+                    "back" "返回") || continue
+                case "$status_action" in
+                    view)
+                        local status_args=(status "$s_cat" "$s_name")
+                        [[ "$s_scope" == "system" ]] && status_args+=(--system)
+                        "$0" "${status_args[@]}" | tui_show_stdin "任务状态"
+                        ;;
+                    logs)
+                        _show_log_detail "$s_cat" "$s_name" "${LOG_DIR_USER}${s_cat}/${s_name}.log"
+                        ;;
+                esac
                 continue
             fi
             if [[ "$action" == "remove" ]] && ! tui_yesno "确认删除" "删除 $s_cat / $s_name？此操作不可撤销。"; then continue; fi
