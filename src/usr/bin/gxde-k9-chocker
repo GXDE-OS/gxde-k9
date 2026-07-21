@@ -7,7 +7,7 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.9.0"
+VERSION="1.9.1"
 
 BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
 BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
@@ -358,14 +358,15 @@ ${C_DIM}用法:${C_RESET}
 ${C_DIM}子命令:${C_RESET}
   list       [--category <cat>] [--json]      ${C_GRAY}列出任务及启用状态${C_RESET}
   add        <category> [选项]                 ${C_GRAY}新增已启用任务${C_RESET}
-  start      <category> <name> [--system|--user] [--yes] ${C_GRAY}启用并立即触发任务${C_RESET}
-  stop       <category> <name> [--system|--user] [--yes] ${C_GRAY}停止任务并禁用${C_RESET}
-  enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务${C_RESET}
-  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止任务并禁用${C_RESET}
+  start      <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启动已启用任务一次${C_RESET}
+  restart    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止后立即启动已启用任务${C_RESET}
+  stop       <category> <name> [--system|--user] [--yes] ${C_GRAY}仅停止关联进程，保留任务状态${C_RESET}
+  enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务（改后缀）${C_RESET}
+  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}仅禁用任务（改后缀）${C_RESET}
   remove     <category> <name> [--system|--user] [--yes] ${C_GRAY}停止并删除配置${C_RESET}
   import     <category> <file> [--name N]     ${C_GRAY}从外部导入脚本${C_RESET}
   logs       <子命令> [...]                    ${C_GRAY}日志查看与导出${C_RESET}
-  status                                     ${C_GRAY}查看 K9 守护进程运行状态${C_RESET}
+  status     [<category> <name>] [--system|--user] ${C_GRAY}查看总览或任务状态${C_RESET}
   help                                       ${C_GRAY}显示此帮助${C_RESET}
   version                                    ${C_GRAY}显示版本号${C_RESET}
 
@@ -379,9 +380,9 @@ ${C_DIM}通用选项:${C_RESET}
 
 ${C_DIM}任务状态与停止范围:${C_RESET}
   启用任务使用 .<category>，禁用任务使用 .<category>.disabled；守护程序仅扫描启用文件。
-  start 会恢复启用后缀并立即触发一次；stop/disable 会先结束 PID_DIR 中记录且仍存活的 PID，
-  并仅额外结束命令行明确引用该任务文件的进程。edging 由守护程序维护 PID；slimy、timer、shot
-  只能可靠停止由 chocker start 记录或显式引用任务文件的进程，不使用无差别 pkill。
+  enable/disable 只改文件名后缀，不启动或停止任务。start/restart 仅适用于已启用的 edging、slimy、shot；
+  timer 仅支持 enable/disable，按计划由守护程序扫描。stop 只结束安全记录或明确引用任务文件的进程，
+  不改后缀；edging/slimy 停止后仍会被守护程序重新启动，需 disable 才能永久阻止。
 
 ${C_DIM}add 详细:${C_RESET}
   add edging  --name N --target "<cmd>" [--no-systemd]
@@ -470,7 +471,6 @@ cmd_enable_disable() {
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
     if [[ "$action" == "disable" ]]; then
         [[ -f "$TASK_ENABLED" ]] || { [[ -f "$TASK_DISABLED" ]] && { log.ok "任务已禁用"; return; }; log.error "找不到任务: $TASK_ENABLED"; exit 1; }
-        stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
         mv -- "$TASK_ENABLED" "$TASK_DISABLED"
     else
         [[ -f "$TASK_DISABLED" ]] || { [[ -f "$TASK_ENABLED" ]] && { log.ok "任务已启用"; return; }; log.error "找不到任务: $TASK_DISABLED"; exit 1; }
@@ -511,11 +511,9 @@ cmd_start() {
     elevate_task_action start; local elevated=$?
     [[ $elevated -eq 0 ]] && return
     [[ $elevated -eq 2 ]] && exit 1
+    [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
-    if [[ -f "$TASK_DISABLED" ]]; then
-        mv -- "$TASK_DISABLED" "$TASK_ENABLED"
-        log.info "已启用任务"
-    fi
+    [[ ! -f "$TASK_DISABLED" ]] || { log.error "任务已禁用，请先执行 enable"; exit 1; }
     [[ -f "$TASK_ENABLED" ]] || { log.error "任务不存在: $TASK_ENABLED"; exit 1; }
     local pidfile pid command
     pidfile=$(pid_file_for "$ACTION_CAT" "$ACTION_NAME")
@@ -531,9 +529,6 @@ cmd_start() {
             [[ -n "$command" ]] || { log.error "edging 配置未定义 TARGET_PROCESS"; exit 1; }
             bash -c 'source "$1"; bash -c "$TARGET_PROCESS" & child=$!; trap "kill \"$child\" 2>/dev/null; exit" TERM INT; wait "$child"' _ "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
             ;;
-        timer)
-            bash -c 'while IFS= read -r line; do [[ -z "$line" || "$line" == \#* ]] && continue; command=${line#*|}; [[ "$command" != "$line" ]] && bash -c "$command"; done < "$1"' _ "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
-            ;;
         slimy|shot)
             bash "$TASK_ENABLED" </dev/null >/dev/null 2>&1 & pid=$!
             ;;
@@ -548,18 +543,29 @@ cmd_stop() {
     elevate_task_action stop; local elevated=$?
     [[ $elevated -eq 0 ]] && return
     [[ $elevated -eq 2 ]] && exit 1
+    [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
-    [[ -f "$TASK_ENABLED" || -f "$TASK_DISABLED" ]] || { log.error "任务不存在: $TASK_ENABLED 或 $TASK_DISABLED"; exit 1; }
-    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
-    if [[ -f "$TASK_ENABLED" ]]; then
-        mv -- "$TASK_ENABLED" "$TASK_DISABLED"
-        log.ok "已停止并禁用 $(tag_category "$ACTION_CAT") $ACTION_NAME"
-    elif [[ -f "$TASK_DISABLED" ]]; then
-        log.ok "任务已停止且处于禁用状态"
-    else
-        log.error "任务不存在: $TASK_ENABLED 或 $TASK_DISABLED"
-        exit 1
+    local task_file="$TASK_ENABLED"
+    [[ -f "$task_file" ]] || task_file="$TASK_DISABLED"
+    [[ -f "$task_file" ]] || { log.error "任务不存在: $TASK_ENABLED 或 $TASK_DISABLED"; exit 1; }
+    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$task_file"
+    log.ok "已停止 $(tag_category "$ACTION_CAT") $ACTION_NAME（任务状态未改变）"
+    if [[ ( "$ACTION_CAT" == "edging" || "$ACTION_CAT" == "slimy" ) && -f "$TASK_ENABLED" ]]; then
+        log.warn "任务仍已启用，K9 守护程序会稍后重新启动它；要永久阻止应 disable。"
     fi
+}
+
+cmd_restart() {
+    parse_task_action "$@" || exit $?
+    elevate_task_action restart; local elevated=$?
+    [[ $elevated -eq 0 ]] && return
+    [[ $elevated -eq 2 ]] && exit 1
+    [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
+    task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
+    [[ ! -f "$TASK_DISABLED" ]] || { log.error "任务已禁用，请先执行 enable"; exit 1; }
+    [[ -f "$TASK_ENABLED" ]] || { log.error "任务不存在: $TASK_ENABLED"; exit 1; }
+    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
+    "$0" start "$ACTION_CAT" "$ACTION_NAME" $([[ "$ACTION_SCOPE" == system ]] && printf '%s' '--system')
 }
 
 # ===================== list 子命令 =====================
@@ -829,7 +835,7 @@ cmd_remove() {
     local target="$TASK_ENABLED"
     [[ -e "$target" ]] || target="$TASK_DISABLED"
     [[ -e "$target" ]] || { log.error "不存在: $TASK_ENABLED 或 $TASK_DISABLED"; exit 1; }
-    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
+    stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$target"
     rm -f -- "$TASK_ENABLED" "$TASK_DISABLED"
     log.ok "已删除 $(tag_scope "$ACTION_SCOPE")/$(tag_category "$ACTION_CAT") $ACTION_NAME"
 }
@@ -915,6 +921,42 @@ cmd__import_as_root() {
 
 # ===================== status 子命令 =====================
 cmd_status() {
+    local cat="" name="" scope="user"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --system) scope="system";;
+            --user) scope="user";;
+            *)
+                if [[ -z "$cat" ]]; then cat="$1"
+                elif [[ -z "$name" ]]; then name="$1"
+                else log.error "status: 多余参数 $1"; return 2; fi;;
+        esac
+        shift
+    done
+    if [[ -n "$cat" || -n "$name" ]]; then
+        [[ -n "$cat" && -n "$name" ]] || { log.error "status 需要同时提供 <category> <name>"; return 2; }
+        valid_category "$cat" || { log.error "未知分类: $cat"; return 2; }
+        task_paths "$cat" "$name" "$scope"
+        local f="$TASK_ENABLED" state="已启用" pidfile pid
+        if [[ -f "$TASK_DISABLED" ]]; then f="$TASK_DISABLED"; state="已禁用"; fi
+        [[ -f "$f" ]] || { log.error "找不到 ${scope} 任务: $cat / $name"; return 1; }
+        echo "任务: $cat / $name"
+        echo "范围: $scope"
+        echo "状态: $state"
+        echo "路径: $f"
+        if [[ "$cat" == "timer" ]]; then
+            echo "运行状态: 由守护程序按计划扫描"
+        else
+            pidfile=$(pid_file_for "$cat" "$name")
+            if [[ -f "$pidfile" ]]; then
+                pid=$(<"$pidfile")
+                if pid_is_active "$pid"; then echo "运行状态: 运行中 (PID=$pid)"; else echo "运行状态: 未运行（PID 文件已过期）"; fi
+            else
+                echo "运行状态: 未运行"
+            fi
+        fi
+        return 0
+    fi
     echo
     box_title "运行状态" 50
 
@@ -1392,10 +1434,28 @@ interactive_list() {
         while true; do
             task_paths "$s_cat" "$s_name" "$s_scope"
             [[ -f "$TASK_ENABLED" ]] && s_file="$TASK_ENABLED" || s_file="$TASK_DISABLED"
-            _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
-            local action
-            action=$(tui_menu "$s_cat / $s_name" "当前状态：$([[ -f "$TASK_ENABLED" ]] && echo 已启用 || echo 已禁用)" "start" "启动（同时启用）" "stop" "停止并禁用" "enable" "仅启用" "disable" "停止并禁用" "remove" "停止并删除" "back" "返回任务列表") || break
+            local action menu_items=("view" "查看配置内容" "status" "查看任务状态")
+            if [[ "$s_cat" != "timer" ]]; then
+                menu_items+=("start" "立即启动一次" "restart" "停止后立即启动" "stop" "停止关联进程（保留状态）")
+            fi
+            if [[ -f "$TASK_ENABLED" ]]; then
+                menu_items+=("disable" "仅禁用（改后缀）")
+            else
+                menu_items+=("enable" "仅启用（改后缀）")
+            fi
+            menu_items+=("remove" "停止并删除" "back" "返回任务列表")
+            action=$(tui_menu "$s_cat / $s_name" "当前状态：$([[ -f "$TASK_ENABLED" ]] && echo 已启用 || echo 已禁用)" "${menu_items[@]}") || break
             [[ "$action" == "back" ]] && break
+            if [[ "$action" == "view" ]]; then
+                _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
+                continue
+            fi
+            if [[ "$action" == "status" ]]; then
+                local status_args=(status "$s_cat" "$s_name")
+                [[ "$s_scope" == "system" ]] && status_args+=(--system)
+                "$0" "${status_args[@]}" | tui_show_stdin "任务状态"
+                continue
+            fi
             if [[ "$action" == "remove" ]] && ! tui_yesno "确认删除" "删除 $s_cat / $s_name？此操作不可撤销。"; then continue; fi
             local args=("$action" "$s_cat" "$s_name")
             [[ "$s_scope" == "system" ]] && args+=(--system)
@@ -1557,9 +1617,9 @@ main() {
 
     case "$1" in
         list)     shift; cmd_list "$@";;
-        show)     shift; cmd_show "$@";;
         add)      shift; cmd_add "$@";;
         start)    shift; cmd_start "$@";;
+        restart)  shift; cmd_restart "$@";;
         stop)     shift; cmd_stop "$@";;
         enable)   shift; cmd_enable_disable enable "$@";;
         disable)  shift; cmd_enable_disable disable "$@";;
@@ -1567,7 +1627,7 @@ main() {
         import)   shift; cmd_import "$@";;
         _import_as_root) shift; cmd__import_as_root "$@";;
         logs)     shift; cmd_logs "$@";;
-        status)   cmd_status;;
+        status)   shift; cmd_status "$@";;
         help|-h|--help) print_help;;
         version|--version|-v) echo "${PROG_NAME} v${VERSION}";;
         *)

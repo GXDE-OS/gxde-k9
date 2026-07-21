@@ -1,3 +1,12 @@
+gxde-k9 (1.9.1) UNRELEASED; urgency=low
+
+  * Refine Chocker lifecycle controls: enable/disable now only rename tasks,
+    add restart, preserve enabled state on stop, and limit timer to enable/disable.
+  * Add per-task status and make the TUI task menu expose configuration viewing
+    and category-appropriate operations directly.
+
+ -- shenmo <shenmo@spark-app.store>  Tue, 21 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.0) UNRELEASED; urgency=low
 
   * Add task start, stop, enable and disable controls using active and

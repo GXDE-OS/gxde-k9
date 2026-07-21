@@ -4,4 +4,5 @@ debian/*.substvars
 debian/*.debhelper
 debian/debhelper-build-stamp
 debian/.debhelper/
+debian/gxde-k9/
 obj-*/

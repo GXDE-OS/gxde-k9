@@ -5,7 +5,7 @@ log.error()  { echo -e "[\e[31mERROR\e[0m]: \e[1m$*\e[0m"; }
 log.info() { echo -e "[\e[96mINFO\e[0m]:  \e[1m$*\e[0m"; }
 log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 
-VERSION="1.9.0"
+VERSION="1.9.1"
 
 # 默认目录
 # 判断当前用户是否为 root
