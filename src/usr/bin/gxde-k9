@@ -7,15 +7,22 @@ log.debug()  { echo -e "[\e[32mDEBUG\e[0m]: \e[1m$*\e[0m"; }
 # 默认目录
 # 判断当前用户是否为 root
 if [[ "$EUID" -eq 0 ]]; then
-    BASE_DIR_SYSTEM="/usr/share/gxde-k9/system/"
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9/system"
 else
-    BASE_DIR_SYSTEM="/usr/share/gxde-k9/"
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9"
 fi
 
-BASE_DIR_USER="$HOME/.local/share/GXDE/gxde-k9/"
+BASE_DIR_USER="$HOME/.local/share/GXDE/gxde-k9"
 
 PID_DIR="/tmp/GXDE/gxde-k9/$UID/"
 LOCKFILE="${PID_DIR}/gxde-k9-daemon.lock"
+
+# 日志目录（用户侧）：按 task 分类存放日志，启动时清理
+LOG_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9/logs/"
+# 单个任务日志文件大小上限（字节），默认 10MB
+LOG_MAX_SIZE=$((1024 * 1024 * 10))
+# 是否启用任务日志（chocker 或用户可通过 --no-logs 关闭）
+K9_ENABLE_LOGS=1
 
 
 
@@ -28,6 +35,9 @@ Options:
   --base-dir <path>    Specify the directory to monitor for .slimy .timer .shot scripts.
   --pid-dir <path>     Specify the location for the PID DIR.
   --termux             Use ${HOME}/gxde-k9/ as monitor directory to adapt termux.
+  --log-dir <path>     Specify the log directory (default: ~/.local/share/GXDE/gxde-k9/logs/).
+  --log-max-size <B>   Per-task log file size limit in bytes (default: 10485760).
+  --no-logs            Disable per-task logging.
   -h                   Show this help message and exit.
 
 Description:
@@ -35,6 +45,10 @@ Description:
   and executes them. It also supports .timer files with crontab-like schedules.
   By default, it monitors $SLIMY_DIR_SYSTEM and $TIMER_DIR_SYSTEM, as well as
   user-specific directories: $SLIMY_DIR_USER and $TIMER_DIR_USER.
+
+Logs:
+  Each task's stdout/stderr is captured into LOG_DIR/<category>/<task-name>.log
+  under the user home. Logs are truncated on each daemon start.
 
 Timer Example:
 * * * * * | <command>
@@ -50,6 +64,39 @@ Timer Example:
 EOF
     exit 0
 }
+
+# 任务日志：写入指定分类与名称的日志文件，超过上限则截断
+# 用法: k9_log_task <category> <task_name> <line>
+k9_log_task() {
+    [[ "$K9_ENABLE_LOGS" -eq 0 ]] && return 0
+    local category="$1"
+    local task_name="$2"
+    local line="$3"
+    local category_dir="${LOG_DIR_USER%/}/${category}"
+    local log_file="${category_dir}/${task_name}.log"
+    [[ -d "$category_dir" ]] || mkdir -p "$category_dir" 2>/dev/null || return 0
+    # 大小检查与截断
+    if [[ -f "$log_file" ]]; then
+        local cur_size
+        cur_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0)
+        if (( cur_size >= LOG_MAX_SIZE )); then
+            # 保留后半部分，丢弃前半部分
+            : > "$log_file"
+        fi
+    fi
+    printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$line" >> "$log_file"
+}
+
+# 启动时清理旧日志
+k9_clean_logs() {
+    [[ "$K9_ENABLE_LOGS" -eq 0 ]] && return 0
+    if [[ -d "$LOG_DIR_USER" ]]; then
+        rm -rf "${LOG_DIR_USER:?}/"*/  2>/dev/null
+        find "$LOG_DIR_USER" -type f -name '*.log' -delete 2>/dev/null
+    fi
+    mkdir -p "$LOG_DIR_USER" 2>/dev/null
+}
+
 # 自动创建多个目录（如果不存在）
 create_directory_if_not_exists() {
     for dir_path in "$@"; do
@@ -118,9 +165,28 @@ while [[ $# -gt 0 ]]; do
             ;;
         --termux)
             shift
-            BASE_DIR=${HOME}/GXDE/gxde-k9/
+            BASE_DIR=${HOME}/GXDE/gxde-k9
             PID_DIR="${HOME}/GXDE/gxde-k9/$UID/"
             LOCKFILE="$PID_DIR/gxde-k9-daemon.lock"
+            ;;
+        --log-dir)
+            shift
+            if [[ -z "$1" ]]; then
+                log.error "Error: --log-dir requires a directory path."
+                exit 1
+            fi
+            LOG_DIR_USER="$1"
+            ;;
+        --log-max-size)
+            shift
+            if [[ -z "$1" ]]; then
+                log.error "Error: --log-max-size requires a positive integer (bytes)."
+                exit 1
+            fi
+            LOG_MAX_SIZE="$1"
+            ;;
+        --no-logs)
+            K9_ENABLE_LOGS=0
             ;;
         -h|--help)
             print_help
@@ -150,10 +216,10 @@ fi
     SHOT_DIR="$SHOT_DIR_SYSTEM"
     EDGING_DIR="$EDGING_DIR_SYSTEM"
 if [[ -z "$BASE_DIR" ]]; then # 有指定的就不改了
-    SLIMY_DIR_USER="$BASE_DIR_USER/slimy/"
-    TIMER_DIR_USER="$BASE_DIR_USER/timer/"
-    SHOT_DIR_USER="$BASE_DIR_USER/shot/"
-    EDGING_DIR_USER="$BASE_DIR_USER/edging/"
+    SLIMY_DIR_USER="${BASE_DIR_USER}/slimy/"
+    TIMER_DIR_USER="${BASE_DIR_USER}/timer/"
+    SHOT_DIR_USER="${BASE_DIR_USER}/shot/"
+    EDGING_DIR_USER="${BASE_DIR_USER}/edging/"
 fi
 
 log.debug $BASE_DIR $BASE_DIR_SYSTEM $SLIMY_DIR
@@ -163,6 +229,13 @@ export SHOT_DIR
 export PID_DIR
 export EDGING_DIR
 export LOCKFILE
+export LOG_DIR_USER
+export LOG_MAX_SIZE
+export K9_ENABLE_LOGS
+export K9_LOG_DIR="$LOG_DIR_USER"
+
+# 启动时清理上次日志
+k9_clean_logs
 
 create_directory_if_not_exists ${SLIMY_DIR} ${TIMER_DIR} ${SHOT_DIR} ${SLIMY_DIR_USER} ${TIMER_DIR_USER} ${SHOT_DIR_USER} ${PID_DIR} ${EDGING_DIR_USER} ${EDGING_DIR}
 
@@ -286,13 +359,25 @@ execute_timers_scripts_in_dir(){
     local dir_path="$1"
         for timer_file in "$dir_path"/*.timer ; do
             [[ -e "$timer_file" ]] || continue
+            local timer_name
+            timer_name=$(basename "$timer_file" .timer)
             while IFS= read -r line; do
+                [[ -z "$line" || "$line" == \#* ]] && continue
                 schedule=$(echo "$line" | cut -d'|' -f1)
-                command=$(echo "$line" | cut -d'|' -f2)
+                command=$(echo "$line" | cut -d'|' -f2-)
                 # 如果 crontab 格式匹配当前时间
                 if is_cron_time_matched "$schedule"; then
                     log.info "$(date +'%Y-%m-%d %H:%M:%S') - Running scheduled task: $command"
-                    bash -c "$command" &
+                    k9_log_task "timer" "$timer_name" "RUN: $command"
+                    if [[ "$K9_ENABLE_LOGS" -eq 1 ]]; then
+                        local out
+                        out=$(bash -c "$command" 2>&1)
+                        local rc=$?
+                        [[ -n "$out" ]] && k9_log_task "timer" "$timer_name" "$out"
+                        [[ $rc -ne 0 ]] && k9_log_task "timer" "$timer_name" "EXIT=$rc"
+                    else
+                        bash -c "$command" &
+                    fi
                 fi
             done < "$timer_file"
         done
@@ -319,9 +404,20 @@ execute_slimy_scripts_in_dir() {
     for slimy_file in "$dir_path"/*.slimy; do
         # 检查文件是否存在，避免在目录为空时出错
         [[ -e "$slimy_file" ]] || continue
-        
-#        echo "$(date +'%Y-%m-%d %H:%M:%S') - Executing slimy script: $slimy_file"
-        bash "$slimy_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing slimy script: $slimy_file"
+        local slimy_name
+        slimy_name=$(basename "$slimy_file" .slimy)
+        if [[ "$K9_ENABLE_LOGS" -eq 1 ]]; then
+            local out
+            out=$(bash "$slimy_file" 2>&1)
+            local rc=$?
+            [[ -n "$out" ]] && k9_log_task "slimy" "$slimy_name" "$out"
+            if [[ $rc -ne 0 ]]; then
+                log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing slimy script: $slimy_file"
+                k9_log_task "slimy" "$slimy_name" "EXIT=$rc"
+            fi
+        else
+            bash "$slimy_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing slimy script: $slimy_file"
+        fi
     done &
 }
 
@@ -340,8 +436,21 @@ execute_shot_scripts_in_dir() {
     local dir_path="$1"
     for shot_file in "$dir_path"/*.shot ; do
         [[ -e "$shot_file" ]] || continue
+        local shot_name
+        shot_name=$(basename "$shot_file" .shot)
         log.info "$(date +'%Y-%m-%d %H:%M:%S') - Executing one-shot script: $shot_file"
-        bash "$shot_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing one-shot script: $shot_file"
+        if [[ "$K9_ENABLE_LOGS" -eq 1 ]]; then
+            local out
+            out=$(bash "$shot_file" 2>&1)
+            local rc=$?
+            [[ -n "$out" ]] && k9_log_task "shot" "$shot_name" "$out"
+            if [[ $rc -ne 0 ]]; then
+                log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing one-shot script: $shot_file"
+                k9_log_task "shot" "$shot_name" "EXIT=$rc"
+            fi
+        else
+            bash "$shot_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing one-shot script: $shot_file"
+        fi
     done
 }
 
@@ -364,14 +473,27 @@ watch_slimy_scripts() {
 }
 
 edging_scripts_handler(){
+local _edging_file="$1"
+local _edging_name
+_edging_name=$(basename "$_edging_file" .edging)
 
-source $1
+# 由 k9 提供的 logging helper（未运行于 k9 环境时输出则被丢弃）
+k9_log_task() {
+    local category="$1" name="$2" line="$3"
+    if [[ -n "$K9_LOG_DIR" && -n "$category" && -n "$name" ]]; then
+        local d="$K9_LOG_DIR/$category"
+        mkdir -p "$d" 2>/dev/null
+        printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$line" >> "$d/$name.log"
+    fi
+}
+
+source "$_edging_file"
 
 # PID 文件目录（从环境变量 PID_DIR 获取，默认为用户配置目录）
 PID_DIR="${PID_DIR:-/tmp/GXDE/gxde-k9/}"
 
-# 自动生成 PROCESS_NAME 为当前 .edging 文件名（去掉扩展名）
-PROCESS_NAME=$(basename "$1" .edging)
+# PROCESS_NAME 名从 .edging 文件名得来
+PROCESS_NAME="$_edging_name"
 
 # ============ 脚本逻辑 ============
 
@@ -382,7 +504,7 @@ fi
 
 # 确保 PID 文件目录存在
 mkdir -p "$PID_DIR" || {
-    echo "[$PROCESS_NAME] 错误：无法创建 PID 文件目录 $PID_DIR！"
+    k9_log_task "edging" "$PROCESS_NAME" "ERROR: cannot create PID dir $PID_DIR"
     exit 1
 }
 
@@ -393,24 +515,22 @@ PID_FILE="$PID_DIR/$PROCESS_NAME.pid"
 if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE" 2>/dev/null)
     if [[ -n "$PID" && -e "/proc/$PID" ]]; then
-            # 如果是命令，简单校验 PID 是否存活
-#            echo "[$PROCESS_NAME] 检测到命令进程，PID: $PID 正在运行。"
             exit 0
     else
-        echo "[$PROCESS_NAME] 无效的 PID 文件，清理：$PID_FILE"
+        k9_log_task "edging" "$PROCESS_NAME" "stale PID file, removing: $PID_FILE"
         rm -f "$PID_FILE"
     fi
 fi
 
 # 如果 PID 文件不存在或无效，启动目标进程
-echo "[$PROCESS_NAME] 目标进程未运行，正在启动：$TARGET_PROCESS"
-bash -c "$TARGET_PROCESS" &
+k9_log_task "edging" "$PROCESS_NAME" "starting: $TARGET_PROCESS"
+bash -c "$TARGET_PROCESS" </dev/null >/dev/null 2>&1 &
 NEW_PID=$!
 if [[ -n "$NEW_PID" && -e "/proc/$NEW_PID" ]]; then
     echo "$NEW_PID" > "$PID_FILE"
-    echo "[$PROCESS_NAME] 目标进程启动成功，PID: $NEW_PID"
+    k9_log_task "edging" "$PROCESS_NAME" "started PID=$NEW_PID"
 else
-    echo "[$PROCESS_NAME] 错误：目标进程启动失败！"
+    k9_log_task "edging" "$PROCESS_NAME" "ERROR: failed to start"
     exit 1
 fi
 }
@@ -418,12 +538,23 @@ fi
 execute_edging_scripts_in_dir() {
     local dir_path="$1"
 
-    # 查找所有 .slimy 文件并逐一执行
+    # 查找所有 .edging 文件并逐一执行
     for edging_file in "$dir_path"/*.edging; do
         # 检查文件是否存在，避免在目录为空时出错
         [[ -e "$edging_file" ]] || continue
-        
-        edging_scripts_handler "$edging_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing edging script: $edging_file"
+
+        if [[ "$K9_ENABLE_LOGS" -eq 1 ]]; then
+            edging_scripts_handler "$edging_file"
+            local rc=$?
+            if [[ $rc -ne 0 ]]; then
+                local en
+                en=$(basename "$edging_file" .edging)
+                log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing edging script: $edging_file"
+                k9_log_task "edging" "$en" "HANDLER_EXIT=$rc"
+            fi
+        else
+            edging_scripts_handler "$edging_file" || log.error "$(date +'%Y-%m-%d %H:%M:%S') - Error executing edging script: $edging_file"
+        fi
     done &
 }
 run_edging_scripts(){

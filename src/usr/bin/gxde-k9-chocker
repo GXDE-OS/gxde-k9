@@ -1,0 +1,724 @@
+#!/bin/bash
+# gxde-k9-chocker —— GXDE K9 的"项圈"管理工具
+# 提供：查看任务、管理（新增/删除）配置、交互式新增、查看与导出当次运行日志
+# 同时支持人类友好的交互式菜单与脚本友好的子命令调用。
+
+set -u
+
+# ===================== 基础变量 =====================
+PROG_NAME="gxde-k9-chocker"
+VERSION="1.0"
+
+if [[ "$EUID" -eq 0 ]]; then
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9/system"
+else
+    BASE_DIR_SYSTEM="/usr/share/gxde-k9"
+fi
+BASE_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9"
+LOG_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9/logs/"
+
+# 支持的任务分类
+CATEGORIES=(slimy timer shot edging)
+
+# ===================== 日志/输出辅助 =====================
+log.warn()  { echo -e "[\e[33mWARN\e[0m]:  \e[1m$*\e[0m" >&2; }
+log.error() { echo -e "[\e[31mERROR\e[0m]: \e[1m$*\e[0m" >&2; }
+log.info()  { echo -e "[\e[96mINFO\e[0m]:  \e[1m$*\e[0m" >&2; }
+log.ok()    { echo -e "[\e[32mOK\e[0m]:    \e[1m$*\e[0m" >&2; }
+
+# 系统配置修改前的风险提示并请求确认
+# 返回 0 表示确认，1 表示拒绝
+confirm_system_change() {
+    log.warn "您即将修改 /usr/share 下的系统配置。"
+    log.warn "系统配置误修改可能导致服务无法启动或 K9 自身异常，请谨慎操作。"
+    log.warn "建议在操作前备份相关目录。"
+    read -r -p $'"\e[33m是否继续？输入 yes 确认：\e[0m ' ans
+    [[ "$ans" == "yes" || "$ans" == "y" || "$ans" == "YES" ]]
+}
+
+# 获取提权命令（优先 pkexec，其次 sudo）
+elevate_cmd() {
+    if command -v pkexec >/dev/null 2>&1; then
+        echo "pkexec"
+    elif command -v sudo >/dev/null 2>&1; then
+        echo "sudo"
+    else
+        echo ""
+    fi
+}
+
+# ===================== 路径解析 =====================
+# category_dir <category> <scope:user|system>
+category_dir() {
+    local cat="$1" scope="${2:-user}"
+    if [[ "$scope" == "system" ]]; then
+        echo "${BASE_DIR_SYSTEM}${cat}/"
+    else
+        echo "${BASE_DIR_USER}${cat}/"
+    fi
+}
+
+# 确保目录存在
+ensure_dir() {
+    local d="$1"
+    [[ -d "$d" ]] || mkdir -p "$d"
+}
+
+# ===================== 帮助 =====================
+print_help() {
+    cat << EOF
+$PROG_NAME v$VERSION —— GXDE K9 任务与配置管理工具
+
+用法:
+  $PROG_NAME                                 # 进入交互式菜单
+  $PROG_NAME <子命令> [选项...]
+
+子命令:
+  list       [--category <cat>] [--json]      列出所有任务/配置
+  show       <category> <name> [--system]     查看某个配置内容
+  add        <category> [选项]                 新增配置（脚本友好）
+  remove     <category> <name> [--system]     删除某个配置
+  import     <category> <src-file> [--name N] [--system]
+                                                从外部导入脚本文件
+  logs       <list|show|export|clear> [...]    日志查看与导出
+  help                                       显示此帮助
+  version                                    显示版本号
+
+分类 (category): ${CATEGORIES[*]}
+
+通用选项:
+  --system          操作 /usr/share 下的系统级配置（需提权，会提示风险）
+  --yes             跳过交互确认（用于脚本调用）
+  --json            以 JSON 输出（list 子命令支持）
+
+add 子命令：
+  add edging  --name <N> --target "<cmd>" [--no-systemd]
+  add timer   --name <N> --schedule "<cron>" --command "<cmd>"
+  add slimy   --name <N> --command "<cmd>"            # 生成最简 .slimy 脚本
+  add shot    --name <N> --command "<cmd>"            # 生成最简 .shot 脚本
+
+logs 子命令：
+  logs list                                 列出所有任务日志
+  logs show   <category> <name>             查看某任务日志
+  logs export <category> <name> <dest>      导出某任务日志到文件
+  logs clear                                清空所有当次运行日志
+
+示例:
+  $PROG_NAME list
+  $PROG_NAME list --category timer --json
+  $PROG_NAME add edging --name nginx --target "nginx" --no-systemd
+  $PROG_NAME add timer --name hello --schedule "* * * * *" --command "echo hi"
+  $PROG_NAME import slimy ./my.sh --name mytask
+  $PROG_NAME remove timer hello
+  $PROG_NAME logs show timer hello
+  $PROG_NAME logs export slimy mytask ./mytask.log
+
+说明:
+  * 默认操作用户侧 (~/.local/share/GXDE/gxde-k9/)。
+  * 使用 --system 操作 /usr/share 时会要求提权并提示风险。
+  * 日志默认位于 ~/.local/share/GXDE/gxde-k9/logs/ ，由 gxde-k9 守护进程写入，
+    并在每次守护进程启动时清理。
+EOF
+}
+
+# ===================== list 子命令 =====================
+cmd_list() {
+    local filter_cat="" json=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --category) shift; filter_cat="$1";;
+            --json) json=1;;
+            *) log.error "list: 未知参数 $1"; exit 2;;
+        esac
+        shift
+    done
+
+    if [[ "$json" -eq 1 ]]; then
+        echo "{"
+        echo "  \"tasks\": ["
+        local first=1
+        for cat in "${CATEGORIES[@]}"; do
+            [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
+            for scope in user system; do
+                local d
+                d=$(category_dir "$cat" "$scope")
+                [[ -d "$d" ]] || continue
+                for f in "$d"/*."$cat"; do
+                    [[ -e "$f" ]] || continue
+                    local n
+                    n=$(basename "$f" ."$cat")
+                    [[ $first -eq 1 ]] || echo ","
+                    printf '    {"category":"%s","name":"%s","scope":"%s","path":"%s"}' "$cat" "$n" "$scope" "$f"
+                    first=0
+                done
+            done
+        done
+        echo ""
+        echo "  ]"
+        echo "}"
+        return
+    fi
+
+    # 人类友好表格
+    printf '%-10s %-30s %-8s %s\n' "CATEGORY" "NAME" "SCOPE" "PATH"
+    printf '%-10s %-30s %-8s %s\n' "----------" "------------------------------" "--------" "----"
+    local any=0
+    for cat in "${CATEGORIES[@]}"; do
+        [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
+        for scope in user system; do
+            local d
+            d=$(category_dir "$cat" "$scope")
+            [[ -d "$d" ]] || continue
+            for f in "$d"/*."$cat"; do
+                [[ -e "$f" ]] || continue
+                local n
+                n=$(basename "$f" ."$cat")
+                printf '%-10s %-30s %-8s %s\n' "$cat" "$n" "$scope" "$f"
+                any=1
+            done
+        done
+    done
+    [[ $any -eq 0 ]] && echo "(暂无任何任务配置)"
+    return 0
+}
+
+# ===================== show 子命令 =====================
+cmd_show() {
+    local cat="" name="" scope="user"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --system) scope="system";;
+            --user)   scope="user";;
+            *) 
+                if [[ -z "$cat" ]]; then cat="$1"
+                elif [[ -z "$name" ]]; then name="$1"
+                else log.error "show: 多余参数 $1"; exit 2; fi;;
+        esac
+        shift
+    done
+    [[ -z "$cat" || -z "$name" ]] && { log.error "show 需要参数 <category> <name>"; exit 2; }
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+    if [[ ! -f "$f" ]]; then
+        log.error "找不到配置: $f"
+        exit 1
+    fi
+    echo "# path: $f"
+    echo "# scope: $scope"
+    echo "# category: $cat"
+    echo "------------------------------------------------------------"
+    cat "$f"
+}
+
+# ===================== add 子命令 =====================
+cmd_add() {
+    local cat="" name="" target="" schedule="" command="" no_systemd=0 scope="user" yes=0
+    # 先取位置参数 category
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        cat="$1"; shift
+    else
+        log.error "add 需要先指定 <category>"; exit 2
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) shift; name="$1";;
+            --target) shift; target="$1";;
+            --schedule) shift; schedule="$1";;
+            --command) shift; command="$1";;
+            --no-systemd) no_systemd=1;;
+            --system) scope="system";;
+            --user)   scope="user";;
+            --yes) yes=1;;
+            *) log.error "add: 未知参数 $1"; exit 2;;
+        esac
+        shift
+    done
+
+    [[ -z "$name" ]] && { log.error "add 需要 --name"; exit 2; }
+    # 校验分类
+    local valid=0
+    for c in "${CATEGORIES[@]}"; do [[ "$c" == "$cat" ]] && valid=1 && break; done
+    [[ $valid -eq 0 ]] && { log.error "未知分类: $cat （支持: ${CATEGORIES[*]}）"; exit 2; }
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+
+    if [[ -e "$f" ]]; then
+        log.error "已存在同名配置: $f （请先 remove）"
+        exit 1
+    fi
+
+    # 若操作系统级，需要提权与确认
+    if [[ "$scope" == "system" ]]; then
+        if [[ $yes -eq 0 ]]; then
+            confirm_system_change || { log.warn "已取消"; exit 1; }
+        fi
+        # 把实际的写操作交给 root 重新调用本脚本
+        local elev
+        elev=$(elevate_cmd)
+        if [[ -z "$elev" ]]; then
+            log.error "未找到 pkexec/sudo，无法提权修改系统配置"
+            exit 1
+        fi
+        local args=(add "$cat" --name "$name" --system --yes)
+        case "$cat" in
+            edging) args+=(--target "$target"); [[ $no_systemd -eq 1 ]] && args+=(--no-systemd);;
+            timer)  args+=(--schedule "$schedule" --command "$command");;
+            slimy|shot) args+=(--command "$command");;
+        esac
+        exec $elev "$0" "${args[@]}"
+    fi
+
+    ensure_dir "$d"
+
+    case "$cat" in
+        edging)
+            [[ -z "$target" ]] && { log.error "add edging 需要 --target"; exit 2; }
+            cat > "$f" << EOF
+#!/bin/bash
+# 目标程序路径（需要运行的可执行文件或命令）
+TARGET_PROCESS="$target"
+# 若检测到 systemd 正在运行则退出
+DONT_RUN_IF_SYSTEMD_EXIST="$([[ $no_systemd -eq 1 ]] && echo 1 || echo "")"
+EOF
+            ;;
+        timer)
+            [[ -z "$schedule" || -z "$command" ]] && { log.error "add timer 需要 --schedule 与 --command"; exit 2; }
+            # 简单校验 cron 字段
+            if ! validate_cron "$schedule"; then
+                log.error "schedule 格式不正确（应为 5 字段 cron）: $schedule"
+                exit 2
+            fi
+            printf '%s | %s\n' "$schedule" "$command" > "$f"
+            ;;
+        slimy)
+            [[ -z "$command" ]] && { log.error "add slimy 需要 --command"; exit 2; }
+            cat > "$f" << 'EOF'
+#!/bin/bash
+EOF
+            printf '%s\n' "$command" >> "$f"
+            ;;
+        shot)
+            [[ -z "$command" ]] && { log.error "add shot 需要 --command"; exit 2; }
+            cat > "$f" << 'EOF'
+#!/bin/bash
+EOF
+            printf '%s\n' "$command" >> "$f"
+            ;;
+    esac
+
+    log.ok "已创建 [$scope/$cat] $name -> $f"
+}
+
+# 校验 5 字段 cron 表达式（仅基本格式检查）
+validate_cron() {
+    local s="$1"
+    local n
+    n=$(echo "$s" | awk '{print NF}')
+    [[ "$n" -eq 5 ]] || return 1
+    return 0
+}
+
+# ===================== remove 子命令 =====================
+cmd_remove() {
+    local cat="" name="" scope="user" yes=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --system) scope="system";;
+            --user)   scope="user";;
+            --yes) yes=1;;
+            *) 
+                if [[ -z "$cat" ]]; then cat="$1"
+                elif [[ -z "$name" ]]; then name="$1"
+                else log.error "remove: 多余参数 $1"; exit 2; fi;;
+        esac
+        shift
+    done
+    [[ -z "$cat" || -z "$name" ]] && { log.error "remove 需要参数 <category> <name>"; exit 2; }
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+
+    if [[ ! -e "$f" ]]; then
+        log.error "不存在: $f"
+        exit 1
+    fi
+
+    if [[ "$scope" == "system" ]]; then
+        if [[ $yes -eq 0 ]]; then
+            confirm_system_change || { log.warn "已取消"; exit 1; }
+        fi
+        local elev
+        elev=$(elevate_cmd)
+        if [[ -z "$elev" ]]; then
+            log.error "未找到 pkexec/sudo，无法提权修改系统配置"
+            exit 1
+        fi
+        exec $elev "$0" remove "$cat" "$name" --system --yes
+    fi
+
+    rm -f "$f"
+    log.ok "已删除 [$scope/$cat] $name"
+}
+
+# ===================== import 子命令 =====================
+cmd_import() {
+    local cat="" src="" name="" scope="user" yes=0
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        cat="$1"; shift
+    else
+        log.error "import 需要先指定 <category>"; exit 2
+    fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) shift; name="$1";;
+            --system) scope="system";;
+            --user)   scope="user";;
+            --yes) yes=1;;
+            *)
+                if [[ -z "$src" ]]; then src="$1"
+                else log.error "import: 多余参数 $1"; exit 2; fi;;
+        esac
+        shift
+    done
+    [[ -z "$src" ]] && { log.error "import 需要 <src-file>"; exit 2; }
+    [[ ! -f "$src" ]] && { log.error "源文件不存在: $src"; exit 1; }
+
+    # 校验分类（slimy/shot/edging 可直接导入脚本；timer 文本也算可导入）
+    local valid=0
+    for c in "${CATEGORIES[@]}"; do [[ "$c" == "$cat" ]] && valid=1 && break; done
+    [[ $valid -eq 0 ]] && { log.error "未知分类: $cat"; exit 2; }
+
+    if [[ -z "$name" ]]; then
+        name=$(basename "$src")
+        # 去掉已知扩展名
+        name="${name%.slimy}"
+        name="${name%.shot}"
+        name="${name%.edging}"
+        name="${name%.timer}"
+        name="${name%.sh}"
+        name="${name%.bash}"
+    fi
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+    if [[ -e "$f" ]]; then
+        log.error "已存在同名配置: $f"
+        exit 1
+    fi
+
+    if [[ "$scope" == "system" ]]; then
+        if [[ $yes -eq 0 ]]; then
+            confirm_system_change || { log.warn "已取消"; exit 1; }
+        fi
+        local elev
+        elev=$(elevate_cmd)
+        if [[ -z "$elev" ]]; then
+            log.error "未找到 pkexec/sudo，无法提权修改系统配置"
+            exit 1
+        fi
+        # 由于源文件可能在用户侧，先复制到临时位置再交给 root
+        local tmp
+        tmp=$(mktemp "/tmp/k9-imp-XXXXXX.${cat}")
+        cp "$src" "$tmp"
+        exec $elev "$0" _import_as_root "$cat" "$tmp" "$name" --system --yes
+    fi
+
+    ensure_dir "$d"
+    cp "$src" "$f"
+    log.ok "已导入 [$scope/$cat] $name <- $src (-> $f)"
+}
+
+# 内部：以 root 身份执行 import
+cmd__import_as_root() {
+    local cat="$1" src="$2" name="$3"; shift 3
+    local scope="system"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --system|--yes) ;;
+        esac
+        shift
+    done
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+    ensure_dir "$d"
+    cp "$src" "$f"
+    rm -f "$src"
+    log.ok "已导入 [$scope/$cat] $name <- $f"
+}
+
+# ===================== logs 子命令 =====================
+cmd_logs() {
+    local sub="${1:-}"
+    [[ -z "$sub" ]] && { log.error "logs 需要子命令: list|show|export|clear"; exit 2; }
+    shift
+    case "$sub" in
+        list)   logs_list "$@";;
+        show)   logs_show "$@";;
+        export) logs_export "$@";;
+        clear)  logs_clear "$@";;
+        *) log.error "未知 logs 子命令: $sub"; exit 2;;
+    esac
+}
+
+logs_list() {
+    [[ ! -d "$LOG_DIR_USER" ]] && { echo "(暂无日志目录: $LOG_DIR_USER)"; return; }
+    local has=0
+    printf '%-10s %-30s %s\n' "CATEGORY" "NAME" "PATH"
+    printf '%-10s %-30s %s\n' "----------" "------------------------------" "----"
+    for cat_dir in "$LOG_DIR_USER"*/; do
+        [[ -d "$cat_dir" ]] || continue
+        local cat
+        cat=$(basename "$cat_dir")
+        for f in "$cat_dir"*.log; do
+            [[ -e "$f" ]] || continue
+            local n
+            n=$(basename "$f" .log)
+            printf '%-10s %-30s %s\n' "$cat" "$n" "$f"
+            has=1
+        done
+    done
+    [[ $has -eq 0 ]] && echo "(暂无任务日志)"
+    return 0
+}
+
+logs_show() {
+    local cat="${1:-}" name="${2:-}"
+    [[ -z "$cat" || -z "$name" ]] && { log.error "logs show 需要 <category> <name>"; exit 2; }
+    local f="${LOG_DIR_USER}${cat}/${name}.log"
+    if [[ ! -f "$f" ]]; then
+        log.error "找不到日志: $f"
+        exit 1
+    fi
+    echo "# $f"
+    echo "------------------------------------------------------------"
+    cat "$f"
+}
+
+logs_export() {
+    local cat="${1:-}" name="${2:-}" dest="${3:-}"
+    [[ -z "$cat" || -z "$name" || -z "$dest" ]] && { log.error "logs export 需要 <category> <name> <dest>"; exit 2; }
+    local f="${LOG_DIR_USER}${cat}/${name}.log"
+    if [[ ! -f "$f" ]]; then
+        log.error "找不到日志: $f"
+        exit 1
+    fi
+    cp "$f" "$dest"
+    log.ok "已导出 $f -> $dest"
+}
+
+logs_clear() {
+    [[ ! -d "$LOG_DIR_USER" ]] && { log.warn "日志目录不存在: $LOG_DIR_USER"; return; }
+    rm -rf "${LOG_DIR_USER:?}/"*/  2>/dev/null
+    find "$LOG_DIR_USER" -type f -name '*.log' -delete 2>/dev/null
+    log.ok "已清空日志目录: $LOG_DIR_USER"
+}
+
+# ===================== 交互式菜单 =====================
+read_choice() {
+    local prompt="$1"
+    read -r -p "$prompt" ans
+    echo "$ans"
+}
+
+# 交互式：选择分类
+pick_category() {
+    echo "可选分类:"
+    local i=1
+    for c in "${CATEGORIES[@]}"; do
+        echo "  $i) $c"
+        i=$((i+1))
+    done
+    local ans
+    ans=$(read_choice "请输入分类编号: ")
+    case "$ans" in
+        1) echo "slimy";;
+        2) echo "timer";;
+        3) echo "shot";;
+        4) echo "edging";;
+        *) echo "";;
+    esac
+}
+
+interactive_add() {
+    echo "==== 新增配置 ===="
+    local cat scope="user"
+    cat=$(pick_category)
+    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
+
+    local name
+    name=$(read_choice "请输入任务名称: ")
+    [[ -z "$name" ]] && { log.warn "名称不能为空"; return; }
+
+    echo "目标位置: 1) 用户侧 (默认)  2) 系统侧 /usr/share (需提权)"
+    local pos
+    pos=$(read_choice "请选择 [1]: ")
+    [[ "$pos" == "2" ]] && scope="system"
+
+    case "$cat" in
+        edging)
+            local target no_systemd="n"
+            target=$(read_choice "请输入要拉起的命令 (TARGET_PROCESS): ")
+            read -r -p "若 systemd 存在则不启动? (y/N): " no_systemd
+            local args=(add edging --name "$name" --target "$target")
+            [[ "$no_systemd" == "y" || "$no_systemd" == "Y" ]] && args+=(--no-systemd)
+            [[ "$scope" == "system" ]] && args+=(--system)
+            "$0" "${args[@]}"
+            ;;
+        timer)
+            local schedule command
+            schedule=$(read_choice "请输入 cron 表达式 (5 字段, 如 '* * * * *'): ")
+            command=$(read_choice "请输入要执行的命令: ")
+            local args=(add timer --name "$name" --schedule "$schedule" --command "$command")
+            [[ "$scope" == "system" ]] && args+=(--system)
+            "$0" "${args[@]}"
+            ;;
+        slimy|shot)
+            local command
+            command=$(read_choice "请输入要执行的命令（将生成最简 $cat 脚本）: ")
+            local args=(add "$cat" --name "$name" --command "$command")
+            [[ "$scope" == "system" ]] && args+=(--system)
+            "$0" "${args[@]}"
+            ;;
+    esac
+}
+
+interactive_import() {
+    echo "==== 从外部导入脚本 ===="
+    local cat scope="user"
+    cat=$(pick_category)
+    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
+
+    local src name
+    src=$(read_choice "请输入要导入的脚本文件路径: ")
+    [[ ! -f "$src" ]] && { log.error "文件不存在: $src"; return; }
+
+    read -r -p "请输入任务名称（留空则用文件名）: " name
+
+    echo "目标位置: 1) 用户侧 (默认)  2) 系统侧 /usr/share (需提权)"
+    local pos
+    pos=$(read_choice "请选择 [1]: ")
+    [[ "$pos" == "2" ]] && scope="system"
+
+    local args=(import "$cat" "$src")
+    [[ -n "$name" ]] && args+=(--name "$name")
+    [[ "$scope" == "system" ]] && args+=(--system)
+    "$0" "${args[@]}"
+}
+
+interactive_remove() {
+    echo "==== 删除配置 ===="
+    "$0" list
+    echo
+    local cat name scope="user"
+    cat=$(pick_category)
+    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
+    name=$(read_choice "请输入任务名称: ")
+
+    echo "来源: 1) 用户侧 (默认)  2) 系统侧 /usr/share"
+    local pos
+    pos=$(read_choice "请选择 [1]: ")
+    [[ "$pos" == "2" ]] && scope="system"
+
+    local args=(remove "$cat" "$name")
+    [[ "$scope" == "system" ]] && args+=(--system)
+    "$0" "${args[@]}"
+}
+
+interactive_logs() {
+    echo "==== 日志管理 ===="
+    echo "1) 列出所有日志"
+    echo "2) 查看某任务日志"
+    echo "3) 导出某任务日志"
+    echo "4) 清空所有日志"
+    local sub
+    sub=$(read_choice "请选择 [1]: ")
+    case "${sub:-1}" in
+        1) "$0" logs list;;
+        2)
+            local cat name
+            cat=$(pick_category)
+            name=$(read_choice "请输入任务名称: ")
+            "$0" logs show "$cat" "$name"
+            ;;
+        3)
+            local cat name dest
+            cat=$(pick_category)
+            name=$(read_choice "请输入任务名称: ")
+            dest=$(read_choice "请输入导出目标文件路径: ")
+            "$0" logs export "$cat" "$name" "$dest"
+            ;;
+        4) "$0" logs clear;;
+        *) log.warn "无效选择";;
+    esac
+}
+
+interactive_menu() {
+    while true; do
+        echo
+        echo "=========== GXDE K9 Chocker ==========="
+        echo "1) 列出所有任务/配置"
+        echo "2) 查看某任务配置内容"
+        echo "3) 新增配置"
+        echo "4) 从外部导入脚本"
+        echo "5) 删除配置"
+        echo "6) 日志管理"
+        echo "0) 退出"
+        echo "======================================="
+        local c
+        c=$(read_choice "请选择: ")
+        case "$c" in
+            1) "$0" list;;
+            2)
+                local cat name scope="user" pos
+                cat=$(pick_category)
+                name=$(read_choice "请输入任务名称: ")
+                echo "来源: 1) 用户侧 (默认)  2) 系统侧"
+                pos=$(read_choice "请选择 [1]: ")
+                [[ "$pos" == "2" ]] && scope="system"
+                local args=(show "$cat" "$name")
+                [[ "$scope" == "system" ]] && args+=(--system)
+                "$0" "${args[@]}"
+                ;;
+            3) interactive_add;;
+            4) interactive_import;;
+            5) interactive_remove;;
+            6) interactive_logs;;
+            0) echo "再见"; exit 0;;
+            *) log.warn "无效选择";;
+        esac
+    done
+}
+
+# ===================== 入口 =====================
+main() {
+    if [[ $# -eq 0 ]]; then
+        interactive_menu
+        return
+    fi
+
+    case "$1" in
+        list)     shift; cmd_list "$@";;
+        show)     shift; cmd_show "$@";;
+        add)      shift; cmd_add "$@";;
+        remove)   shift; cmd_remove "$@";;
+        import)   shift; cmd_import "$@";;
+        _import_as_root) shift; cmd__import_as_root "$@";;
+        logs)     shift; cmd_logs "$@";;
+        help|-h|--help) print_help;;
+        version|-v) echo "$PROG_NAME v$VERSION";;
+        *)
+            log.error "未知命令: $1"
+            print_help
+            exit 2;;
+    esac
+}
+
+main "$@"

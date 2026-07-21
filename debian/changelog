@@ -1,3 +1,14 @@
+gxde-k9 (1.7.0) UNRELEASED; urgency=low
+
+  * Add per-task logging (categorized under ~/.local/share/GXDE/gxde-k9/logs/)
+    with size limit and clear-on-startup; new --log-dir/--log-max-size/--no-logs.
+  * Add gxde-k9-chocker entry: list/show/add/remove/import tasks,
+    interactive menu and script-friendly subcommands; manage user-side configs
+    and (with privilege escalation + risk warning) system-side configs.
+  * Support importing external scripts as .slimy/.shot/etc.
+
+ -- shenmo <shenmo@spark-app.store>  Mon, 21 Jul 2025 00:00:00 +0800
+
 gxde-k9 (1.6.1) UNRELEASED; urgency=low
 
   * Support edging
