@@ -1,3 +1,19 @@
+gxde-k9 (1.8.0) UNRELEASED; urgency=low
+
+  * gxde-k9-chocker: replace number-driven `select` menus with a full TUI
+    based on whiptail/dialog (arrow-key navigation, checklist, inputbox,
+    yesno, scrollable textbox). Bumped chocker version to 1.1.0.
+  * chocker: add batch-remove (multi-select checklist) and unified
+    "pick log task" picker reused across logs show/export.
+  * chocker: show config and logs inside a scrollable textbox; list/status
+    output is now viewed in-app instead of dumping to terminal.
+  * chocker: require_tui() checks for whiptail/dialog at startup and prints
+    install hints for Debian/GXDE, Arch and Termux when missing;
+    non-interactive subcommands still work without a TUI.
+  * control: add "whiptail | dialog" to Depends.
+
+ -- shenmo <shenmo@spark-app.store>  Mon, 21 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.7.0) UNRELEASED; urgency=low
 
   * Add per-task logging (categorized under ~/.local/share/GXDE/gxde-k9/logs/)

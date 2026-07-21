@@ -1,13 +1,13 @@
 #!/bin/bash
 # gxde-k9-chocker —— GXDE K9 的"项圈"管理工具
 # 提供：查看任务、管理（新增/删除）配置、交互式新增、查看与导出当次运行日志
-# 同时支持人类友好的交互式菜单与脚本友好的子命令调用。
+# 同时支持人类友好的交互式 TUI 菜单（基于 whiptail/dialog）与脚本友好的子命令调用。
 
 set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.0"
+VERSION="1.1.0"
 
 if [[ "$EUID" -eq 0 ]]; then
     BASE_DIR_SYSTEM="/usr/share/gxde-k9/system"
@@ -20,23 +20,289 @@ LOG_DIR_USER="${HOME}/.local/share/GXDE/gxde-k9/logs/"
 # 支持的任务分类
 CATEGORIES=(slimy timer shot edging)
 
-# ===================== 日志/输出辅助 =====================
-log.warn()  { echo -e "[\e[33mWARN\e[0m]:  \e[1m$*\e[0m" >&2; }
-log.error() { echo -e "[\e[31mERROR\e[0m]: \e[1m$*\e[0m" >&2; }
-log.info()  { echo -e "[\e[96mINFO\e[0m]:  \e[1m$*\e[0m" >&2; }
-log.ok()    { echo -e "[\e[32mOK\e[0m]:    \e[1m$*\e[0m" >&2; }
+# ===================== 样式定义 =====================
+# 颜色（用于命令行输出；TUI 内部由 whiptail/dialog 自行配色）
+C_RED='\e[31m'
+C_GREEN='\e[32m'
+C_YELLOW='\e[33m'
+C_BLUE='\e[34m'
+C_MAGENTA='\e[35m'
+C_CYAN='\e[36m'
+C_GRAY='\e[90m'
+C_DIM='\e[2m'
+C_BOLD='\e[1m'
+C_RESET='\e[0m'
 
-# 系统配置修改前的风险提示并请求确认
-# 返回 0 表示确认，1 表示拒绝
+# 制表符
+T_TOP="╭" T_TB="─" T_TJ="┬" T_TE="╮"
+T_BOT="╰" T_BB="─" T_BJ="┴" T_BE="╯"
+T_L="├" T_R="┤" T_MID="│" T_CROSS="┼"
+T_H="─"
+T_TL="╭" T_TR="╮"
+T_BL="╰" T_BR="╯"
+
+# ===================== 日志/输出辅助 =====================
+log.warn()  { echo -e "${C_YELLOW}${C_BOLD}◆ WARN${C_RESET}  $*" >&2; }
+log.error() { echo -e "${C_RED}${C_BOLD}✘ ERROR${C_RESET} $*" >&2; }
+log.info()  { echo -e "${C_CYAN}${C_BOLD}● INFO${C_RESET}  $*" >&2; }
+log.ok()    { echo -e "${C_GREEN}${C_BOLD}✔ OK${C_RESET}    $*" >&2; }
+
+# 画一根横线
+hline() {
+    local w=${1:-60}
+    printf "${C_GRAY}${C_DIM}"
+    printf '%*s' "$w" '' | sed "s/ /${T_H}/g"
+    printf "${C_RESET}\n"
+}
+
+# 画上边框
+box_top() {
+    local w=${1:-60}
+    echo -ne "${C_GRAY}${C_DIM}${T_TOP}"
+    printf '%*s' "$((w-2))" '' | sed "s/ /${T_TB}/g"
+    echo -e "${T_TE}${C_RESET}"
+}
+
+# 画下边框
+box_bottom() {
+    local w=${1:-60}
+    echo -ne "${C_GRAY}${C_DIM}${T_BL}"
+    printf '%*s' "$((w-2))" '' | sed "s/ /${T_BB}/g"
+    echo -e "${T_BR}${C_RESET}"
+}
+
+# 带框的标题
+box_title() {
+    local title="$1" w=${2:-60}
+    local pad=$(( (w - ${#title} - 4) / 2 ))
+    echo -ne "${C_GRAY}${C_DIM}${T_TOP}${T_TB}"
+    printf '%*s' "$pad" '' | sed "s/ /${T_TB}/g"
+    echo -ne "${C_BOLD}${C_CYAN} ${title} ${C_RESET}${C_GRAY}${C_DIM}"
+    printf '%*s' "$(( w - pad - ${#title} - 4 ))" '' | sed "s/ /${T_TB}/g"
+    echo -e "${T_TE}${C_RESET}"
+}
+
+# 彩色标签
+tag_scope() {
+    local scope="$1"
+    if [[ "$scope" == "system" ]]; then
+        echo -ne "${C_YELLOW}sys ${C_RESET}"
+    else
+        echo -ne "${C_GREEN}user${C_RESET}"
+    fi
+}
+
+tag_category() {
+    local cat="$1"
+    case "$cat" in
+        slimy)  echo -ne "${C_MAGENTA}slimy ${C_RESET}";;
+        timer)  echo -ne "${C_BLUE}timer ${C_RESET}";;
+        shot)   echo -ne "${C_CYAN}shot  ${C_RESET}";;
+        edging) echo -ne "${C_YELLOW}edging${C_RESET}";;
+        *)      printf '%-6s' "$cat";;
+    esac
+}
+
+# ===================== 终端尺寸检测 =====================
+detect_term_width() {
+    local w
+    w=$(tput cols 2>/dev/null || echo 80)
+    # cap at 88, floor at 50
+    [[ "$w" -gt 88 ]] && w=88
+    [[ "$w" -lt 50 ]] && w=50
+    echo "$w"
+}
+
+# 获取终端宽度，供后续 TUI 函数使用
+_TERM_W=$(detect_term_width)
+_tw() { detect_term_width; }
+
+# ===================== TUI 后端检测 =====================
+# 优先使用 whiptail（系统通常预装），其次 dialog；为空表示均不可用
+TUI_BACKEND=""
+detect_tui_backend() {
+    [[ -n "${TUI_BACKEND:-}" ]] && return
+    if command -v whiptail >/dev/null 2>&1; then
+        TUI_BACKEND="whiptail"
+    elif command -v dialog >/dev/null 2>&1; then
+        TUI_BACKEND="dialog"
+    fi
+}
+
+# 交互模式必须的 TUI 检查；缺失则给出安装提示并退出
+require_tui() {
+    detect_tui_backend
+    if [[ -z "$TUI_BACKEND" ]]; then
+        cat >&2 <<EOF
+
+${C_RED}${C_BOLD}✘ 缺少 TUI 依赖${C_RESET}
+
+${C_YELLOW}交互式菜单需要 ${C_BOLD}whiptail${C_RESET}${C_YELLOW} 或 ${C_BOLD}dialog${C_RESET}${C_YELLOW}。${C_RESET}
+
+${C_CYAN}安装方式:${C_RESET}
+  Debian/Ubuntu/GXDE:  ${C_BOLD}sudo apt install libnewt${C_RESET}      (提供 whiptail)
+                       ${C_BOLD}sudo apt install dialog${C_RESET}
+  Arch Linux:          ${C_BOLD}sudo pacman -S libnewt${C_RESET}        (whiptail)
+                       ${C_BOLD}sudo pacman -S dialog${C_RESET}
+  Termux:              ${C_BOLD}pkg install libnewt${C_RESET}           (whiptail)
+                       ${C_BOLD}pkg install dialog${C_RESET}
+
+${C_DIM}也可改用非交互子命令:${C_RESET}
+  ${PROG_NAME} list
+  ${PROG_NAME} add timer --name hi --schedule '* * * * *' --command 'echo hi'
+  ${PROG_NAME} --help
+EOF
+        exit 1
+    fi
+}
+
+# ===================== TUI 包装器 =====================
+# 公共 backtitle（每次进入主菜单时刷新）
+_BACKTITLE="GXDE K9 Chocker v${VERSION}"
+
+_refresh_backtitle() {
+    local user_count=0 sys_count=0 log_count=0
+    local cat f d
+    for cat in "${CATEGORIES[@]}"; do
+        d=$(category_dir "$cat" user)
+        [[ -d "$d" ]] && while IFS= read -r -d '' f; do user_count=$((user_count+1)); done < <(find "$d" -maxdepth 1 -name "*.$cat" -type f -print0 2>/dev/null)
+        d=$(category_dir "$cat" system)
+        [[ -d "$d" ]] && while IFS= read -r -d '' f; do sys_count=$((sys_count+1)); done < <(find "$d" -maxdepth 1 -name "*.$cat" -type f -print0 2>/dev/null)
+    done
+    if [[ -d "$LOG_DIR_USER" ]]; then
+        while IFS= read -r -d '' _; do log_count=$((log_count+1)); done < <(find "$LOG_DIR_USER" -name '*.log' -type f -print0 2>/dev/null)
+    fi
+    _BACKTITLE="GXDE K9 Chocker v${VERSION}   |   配置: ${user_count} user / ${sys_count} system   |   日志: ${log_count} 个"
+}
+
+# 计算最佳尺寸：返回 "h w"
+_tui_size() {
+    local items=${1:-0}
+    local h w
+    h=$(tput lines 2>/dev/null || echo 24)
+    w=$(tput cols 2>/dev/null || echo 80)
+    (( w > 88 )) && w=88
+    (( w < 60 )) && w=60
+    # 至少需要 items + 7 行；至多留 2 行外边距
+    local need=$(( items + 7 ))
+    (( need > h - 2 )) && need=$(( h - 2 ))
+    (( need < 8 )) && need=8
+    echo "$need $w"
+}
+
+# 统一调用底层工具；用 3>&1 1>&2 2>&3 把 stdout 让给选择结果
+_tui_run() {
+    if [[ "$TUI_BACKEND" == "dialog" ]]; then
+        dialog "$@"
+    else
+        whiptail "$@"
+    fi
+}
+
+# tui_menu <title> <text> <tag1> <desc1> [<tag2> <desc2> ...]
+# 返回（stdout）: 选中的 tag；取消时返回码 1
+tui_menu() {
+    local title="$1"; shift
+    local text="$1"; shift
+    local count=$(( $# / 2 ))
+    local h w
+    read -r h w < <(_tui_size "$count")
+    _tui_run --backtitle "${_BACKTITLE}" --title "$title" --menu "$text" "$h" "$w" "$count" "$@" 3>&1 1>&2 2>&3
+}
+
+# tui_checklist <title> <text> <tag1> <desc1> <state1> [...]
+# state: on / off
+# 返回（stdout）: 选中项以换行分隔；取消时返回码 1
+tui_checklist() {
+    local title="$1"; shift
+    local text="$1"; shift
+    local count=$(( $# / 3 ))
+    local h w
+    read -r h w < <(_tui_size "$count")
+    _tui_run --separate-output --backtitle "${_BACKTITLE}" --title "$title" --checklist "$text" "$h" "$w" "$count" "$@" 3>&1 1>&2 2>&3
+}
+
+# tui_inputbox <title> <text> [default]
+tui_inputbox() {
+    local title="$1" text="$2" default="${3:-}"
+    local h w
+    read -r h w < <(_tui_size 0)
+    if [[ -n "$default" ]]; then
+        _tui_run --backtitle "${_BACKTITLE}" --title "$title" --inputbox "$text" "$h" "$w" "$default" 3>&1 1>&2 2>&3
+    else
+        _tui_run --backtitle "${_BACKTITLE}" --title "$title" --inputbox "$text" "$h" "$w" 3>&1 1>&2 2>&3
+    fi
+}
+
+# tui_yesno <title> <text>  -> 0=yes 1=no
+tui_yesno() {
+    local title="$1" text="$2"
+    local h w
+    read -r h w < <(_tui_size 0)
+    _tui_run --backtitle "${_BACKTITLE}" --title "$title" --yesno "$text" "$h" "$w"
+}
+
+# tui_msgbox <title> <text>
+tui_msgbox() {
+    local title="$1" text="$2"
+    local h w
+    read -r h w < <(_tui_size 0)
+    _tui_run --backtitle "${_BACKTITLE}" --title "$title" --msgbox "$text" "$h" "$w"
+}
+
+# tui_textbox <title> <file>  滚动查看文本文件
+tui_textbox() {
+    local title="$1" file="$2"
+    local h w
+    read -r h w < <(_tui_size 0)
+    if [[ "$TUI_BACKEND" == "dialog" ]]; then
+        dialog --backtitle "${_BACKTITLE}" --title "$title" --textbox "$file" "$h" "$w"
+    else
+        whiptail --backtitle "${_BACKTITLE}" --title "$title" --scrolltext --textbox "$file" "$h" "$w"
+    fi
+}
+
+# 从 stdin 读取内容，剥离 ANSI 转义后用 textbox 展示
+tui_show_stdin() {
+    local title="$1"
+    local tmp
+    tmp=$(mktemp /tmp/k9-view-XXXXXX.txt)
+    sed -r 's/\x1B\[[0-9;]*[mK]//g' > "$tmp"
+    if [[ -s "$tmp" ]]; then
+        tui_textbox "$title" "$tmp"
+    else
+        tui_msgbox "$title" "（无内容）"
+    fi
+    rm -f "$tmp"
+}
+
+# 简单确认对话框（兼容旧调用名）
+confirm_action() {
+    local msg="${1:-确认执行？}"
+    tui_yesno "请确认" "$msg"
+}
+
+# ===================== 风险提示/提权 =====================
 confirm_system_change() {
-    log.warn "您即将修改 /usr/share 下的系统配置。"
-    log.warn "系统配置误修改可能导致服务无法启动或 K9 自身异常，请谨慎操作。"
-    log.warn "建议在操作前备份相关目录。"
-    read -r -p $'"\e[33m是否继续？输入 yes 确认：\e[0m ' ans
+    # 若 TUI 可用且 stdin 是终端，使用 TUI 风格的确认
+    detect_tui_backend
+    if [[ -n "$TUI_BACKEND" ]] && [[ -t 0 ]]; then
+        tui_yesno "⚠ 风险操作" \
+            "您即将修改 /usr/share 下的系统级配置。\n系统配置误修改可能导致服务无法启动或 K9 自身异常。\n建议在操作前备份相关目录。\n\n是否继续？"
+        return $?
+    fi
+    # 命令行回退（保持原行为）
+    echo
+    echo -e "  ${C_RED}${C_BOLD}⚠ 风险操作${C_RESET}"
+    echo
+    echo -e "  ${C_YELLOW}您即将修改 /usr/share 下的系统级配置。${C_RESET}"
+    echo -e "  ${C_YELLOW}系统配置误修改可能导致服务无法启动或 K9 自身异常。${C_RESET}"
+    echo -e "  ${C_YELLOW}建议在操作前备份相关目录。${C_RESET}"
+    echo
+    read -r -p "  输入 ${C_BOLD}yes${C_RESET} 确认： " ans 2>&1
     [[ "$ans" == "yes" || "$ans" == "y" || "$ans" == "YES" ]]
 }
 
-# 获取提权命令（优先 pkexec，其次 sudo）
 elevate_cmd() {
     if command -v pkexec >/dev/null 2>&1; then
         echo "pkexec"
@@ -48,76 +314,84 @@ elevate_cmd() {
 }
 
 # ===================== 路径解析 =====================
-# category_dir <category> <scope:user|system>
 category_dir() {
     local cat="$1" scope="${2:-user}"
     if [[ "$scope" == "system" ]]; then
-        echo "${BASE_DIR_SYSTEM}${cat}/"
+        echo "${BASE_DIR_SYSTEM}/${cat}/"
     else
-        echo "${BASE_DIR_USER}${cat}/"
+        echo "${BASE_DIR_USER}/${cat}/"
     fi
 }
 
-# 确保目录存在
 ensure_dir() {
     local d="$1"
     [[ -d "$d" ]] || mkdir -p "$d"
 }
 
+numfmt_size() {
+    local b=$1
+    if (( b >= 1048576 )); then
+        printf "%.1fMB" "$(echo "scale=1; $b/1048576" | bc -l 2>/dev/null || echo "$((b/1048576)).0")"
+    elif (( b >= 1024 )); then
+        printf "%.1fKB" "$(echo "scale=1; $b/1024" | bc -l 2>/dev/null || echo "$((b/1024)).0")"
+    else
+        printf "%dB" "$b"
+    fi
+}
+
 # ===================== 帮助 =====================
 print_help() {
     cat << EOF
-$PROG_NAME v$VERSION —— GXDE K9 任务与配置管理工具
+${C_BOLD}${PROG_NAME} v${VERSION}${C_RESET} — ${C_CYAN}GXDE K9 任务与配置管理工具${C_RESET}
 
-用法:
-  $PROG_NAME                                 # 进入交互式菜单
-  $PROG_NAME <子命令> [选项...]
+${C_DIM}用法:${C_RESET}
+  ${PROG_NAME}                       进入交互式 TUI 菜单（需 whiptail 或 dialog）
+  ${PROG_NAME} <子命令> [选项...]
 
-子命令:
-  list       [--category <cat>] [--json]      列出所有任务/配置
-  show       <category> <name> [--system]     查看某个配置内容
-  add        <category> [选项]                 新增配置（脚本友好）
-  remove     <category> <name> [--system]     删除某个配置
-  import     <category> <src-file> [--name N] [--system]
-                                                从外部导入脚本文件
-  logs       <list|show|export|clear> [...]    日志查看与导出
-  help                                       显示此帮助
-  version                                    显示版本号
+${C_DIM}子命令:${C_RESET}
+  list       [--category <cat>] [--json]      ${C_GRAY}列出所有任务/配置${C_RESET}
+  show       <category> <name>                ${C_GRAY}查看某个配置内容${C_RESET}
+  add        <category> [选项]                 ${C_GRAY}新增配置${C_RESET}
+  remove     <category> <name>                ${C_GRAY}删除配置${C_RESET}
+  import     <category> <file> [--name N]     ${C_GRAY}从外部导入脚本${C_RESET}
+  logs       <子命令> [...]                    ${C_GRAY}日志查看与导出${C_RESET}
+  status                                     ${C_GRAY}查看 K9 守护进程运行状态${C_RESET}
+  help                                       ${C_GRAY}显示此帮助${C_RESET}
+  version                                    ${C_GRAY}显示版本号${C_RESET}
 
-分类 (category): ${CATEGORIES[*]}
+${C_DIM}分类:${C_RESET}
+  $(for c in "${CATEGORIES[@]}"; do echo -n "$(tag_category "$c") "; done)
 
-通用选项:
-  --system          操作 /usr/share 下的系统级配置（需提权，会提示风险）
-  --yes             跳过交互确认（用于脚本调用）
-  --json            以 JSON 输出（list 子命令支持）
+${C_DIM}通用选项:${C_RESET}
+  --system          操作系统级配置（/usr/share，需提权）
+  --yes             跳过交互确认（脚本调用）
+  --json            JSON 输出（list 子命令）
 
-add 子命令：
-  add edging  --name <N> --target "<cmd>" [--no-systemd]
-  add timer   --name <N> --schedule "<cron>" --command "<cmd>"
-  add slimy   --name <N> --command "<cmd>"            # 生成最简 .slimy 脚本
-  add shot    --name <N> --command "<cmd>"            # 生成最简 .shot 脚本
+${C_DIM}add 详细:${C_RESET}
+  add edging  --name N --target "<cmd>" [--no-systemd]
+  add timer   --name N --schedule "<cron>" --command "<cmd>"
+  add slimy   --name N --command "<cmd>"
+  add shot    --name N --command "<cmd>"
 
-logs 子命令：
-  logs list                                 列出所有任务日志
-  logs show   <category> <name>             查看某任务日志
-  logs export <category> <name> <dest>      导出某任务日志到文件
-  logs clear                                清空所有当次运行日志
+${C_DIM}logs 子命令:${C_RESET}
+  logs list                                  列出所有任务日志
+  logs show   <category> <name>              查看某任务日志
+  logs export <category> <name> <dest>       导出日志
+  logs clear                                 清空日志
 
-示例:
-  $PROG_NAME list
-  $PROG_NAME list --category timer --json
-  $PROG_NAME add edging --name nginx --target "nginx" --no-systemd
-  $PROG_NAME add timer --name hello --schedule "* * * * *" --command "echo hi"
-  $PROG_NAME import slimy ./my.sh --name mytask
-  $PROG_NAME remove timer hello
-  $PROG_NAME logs show timer hello
-  $PROG_NAME logs export slimy mytask ./mytask.log
+${C_DIM}示例:${C_RESET}
+  ${PROG_NAME} list
+  ${PROG_NAME} list --json
+  ${PROG_NAME} list --category timer --json
+  ${PROG_NAME} add timer --name hello --schedule '* * * * *' --command 'echo hi'
+  ${PROG_NAME} remove timer hello
 
-说明:
-  * 默认操作用户侧 (~/.local/share/GXDE/gxde-k9/)。
-  * 使用 --system 操作 /usr/share 时会要求提权并提示风险。
-  * 日志默认位于 ~/.local/share/GXDE/gxde-k9/logs/ ，由 gxde-k9 守护进程写入，
-    并在每次守护进程启动时清理。
+${C_DIM}交互式 TUI 依赖:${C_RESET}
+  ${C_GRAY}whiptail (libnewt) 或 dialog${C_RESET}
+  Debian/GXDE: ${C_GRAY}sudo apt install libnewt${C_RESET}    Termux: ${C_GRAY}pkg install libnewt${C_RESET}
+
+${C_DIM}日志目录:${C_RESET}
+  ${C_GRAY}${LOG_DIR_USER}${C_RESET}
 EOF
 }
 
@@ -133,36 +407,71 @@ cmd_list() {
         shift
     done
 
-    if [[ "$json" -eq 1 ]]; then
-        echo "{"
-        echo "  \"tasks\": ["
-        local first=1
-        for cat in "${CATEGORIES[@]}"; do
-            [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
-            for scope in user system; do
-                local d
-                d=$(category_dir "$cat" "$scope")
-                [[ -d "$d" ]] || continue
-                for f in "$d"/*."$cat"; do
-                    [[ -e "$f" ]] || continue
-                    local n
-                    n=$(basename "$f" ."$cat")
-                    [[ $first -eq 1 ]] || echo ","
-                    printf '    {"category":"%s","name":"%s","scope":"%s","path":"%s"}' "$cat" "$n" "$scope" "$f"
-                    first=0
-                done
+    [[ "$json" -eq 1 ]] && { cmd_list_json "$filter_cat"; return; }
+
+    # 收集所有条目
+    local items=()
+    for cat in "${CATEGORIES[@]}"; do
+        [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
+        for scope in user system; do
+            local d
+            d=$(category_dir "$cat" "$scope")
+            [[ -d "$d" ]] || continue
+            for f in "$d"/*."$cat"; do
+                [[ -e "$f" ]] || continue
+                items+=("$cat|$scope|$(basename "$f" ."$cat")|$f")
             done
         done
-        echo ""
-        echo "  ]"
-        echo "}"
-        return
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        echo
+        echo -e "  ${C_DIM}${C_GRAY}暂无任何任务配置。使用 ${C_CYAN}${PROG_NAME} add${C_RESET}${C_DIM}${C_GRAY} 新增。${C_RESET}"
+        echo
+        return 0
     fi
 
-    # 人类友好表格
-    printf '%-10s %-30s %-8s %s\n' "CATEGORY" "NAME" "SCOPE" "PATH"
-    printf '%-10s %-30s %-8s %s\n' "----------" "------------------------------" "--------" "----"
-    local any=0
+    echo
+    local w=72
+    box_title "任务列表" $w
+
+    # ┌──────┬──────────────┬──────┬────┐
+    printf "${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-6s${C_RESET}" "分类"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-22s${C_RESET}" "名称"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-5s${C_RESET}" "来源"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-24s${C_RESET}" "路径"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET}"
+    echo
+
+    hline $w
+
+    for item in "${items[@]}"; do
+        IFS='|' read -r cat scope name path <<< "$item"
+        printf "${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        tag_category "$cat"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "${C_BOLD}%-22s${C_RESET}" "$name"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        tag_scope "$scope"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "${C_GRAY}%-24s${C_RESET}" "$(basename "$(dirname "$path")")/$(basename "$path")"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET}"
+        echo
+    done
+
+    box_bottom $w
+    echo
+}
+
+cmd_list_json() {
+    local filter_cat="$1"
+    echo "{"
+    echo "  \"tasks\": ["
+    local first=1
     for cat in "${CATEGORIES[@]}"; do
         [[ -n "$filter_cat" && "$cat" != "$filter_cat" ]] && continue
         for scope in user system; do
@@ -173,13 +482,15 @@ cmd_list() {
                 [[ -e "$f" ]] || continue
                 local n
                 n=$(basename "$f" ."$cat")
-                printf '%-10s %-30s %-8s %s\n' "$cat" "$n" "$scope" "$f"
-                any=1
+                [[ $first -eq 1 ]] || echo ","
+                printf '    {"category":"%s","name":"%s","scope":"%s","path":"%s"}' "$cat" "$n" "$scope" "$f"
+                first=0
             done
         done
     done
-    [[ $any -eq 0 ]] && echo "(暂无任何任务配置)"
-    return 0
+    echo ""
+    echo "  ]"
+    echo "}"
 }
 
 # ===================== show 子命令 =====================
@@ -189,7 +500,7 @@ cmd_show() {
         case "$1" in
             --system) scope="system";;
             --user)   scope="user";;
-            *) 
+            *)
                 if [[ -z "$cat" ]]; then cat="$1"
                 elif [[ -z "$name" ]]; then name="$1"
                 else log.error "show: 多余参数 $1"; exit 2; fi;;
@@ -205,17 +516,31 @@ cmd_show() {
         log.error "找不到配置: $f"
         exit 1
     fi
-    echo "# path: $f"
-    echo "# scope: $scope"
-    echo "# category: $cat"
-    echo "------------------------------------------------------------"
-    cat "$f"
+
+    local size
+    size=$(stat -c%s "$f" 2>/dev/null || echo "?")
+    echo
+    box_title "配置内容" 56
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  分类: $(tag_category "$cat")"
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  名称: ${C_BOLD}$name${C_RESET}"
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  来源: $(tag_scope "$scope")"
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  路径: ${C_GRAY}$f${C_RESET}"
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  大小: ${C_GRAY}${size} bytes${C_RESET}"
+    box_bottom 56
+    echo
+    hline 56
+    if [[ -x "$f" && "$cat" != "timer" ]]; then
+        echo -e "${C_DIM}${C_GRAY}# 可执行脚本${C_RESET}"
+    fi
+    while IFS= read -r line; do
+        printf "  %s\n" "$line"
+    done < "$f"
+    echo
 }
 
 # ===================== add 子命令 =====================
 cmd_add() {
     local cat="" name="" target="" schedule="" command="" no_systemd=0 scope="user" yes=0
-    # 先取位置参数 category
     if [[ $# -gt 0 && "$1" != --* ]]; then
         cat="$1"; shift
     else
@@ -238,7 +563,6 @@ cmd_add() {
     done
 
     [[ -z "$name" ]] && { log.error "add 需要 --name"; exit 2; }
-    # 校验分类
     local valid=0
     for c in "${CATEGORIES[@]}"; do [[ "$c" == "$cat" ]] && valid=1 && break; done
     [[ $valid -eq 0 ]] && { log.error "未知分类: $cat （支持: ${CATEGORIES[*]}）"; exit 2; }
@@ -252,12 +576,11 @@ cmd_add() {
         exit 1
     fi
 
-    # 若操作系统级，需要提权与确认
+    # 系统级需要提权
     if [[ "$scope" == "system" ]]; then
         if [[ $yes -eq 0 ]]; then
             confirm_system_change || { log.warn "已取消"; exit 1; }
         fi
-        # 把实际的写操作交给 root 重新调用本脚本
         local elev
         elev=$(elevate_cmd)
         if [[ -z "$elev" ]]; then
@@ -278,17 +601,15 @@ cmd_add() {
     case "$cat" in
         edging)
             [[ -z "$target" ]] && { log.error "add edging 需要 --target"; exit 2; }
-            cat > "$f" << EOF
-#!/bin/bash
-# 目标程序路径（需要运行的可执行文件或命令）
-TARGET_PROCESS="$target"
-# 若检测到 systemd 正在运行则退出
-DONT_RUN_IF_SYSTEMD_EXIST="$([[ $no_systemd -eq 1 ]] && echo 1 || echo "")"
-EOF
+            cat > "$f" <<-EOF
+				#!/bin/bash
+				# 目标程序路径
+				TARGET_PROCESS="$target"
+				DONT_RUN_IF_SYSTEMD_EXIST="$([[ $no_systemd -eq 1 ]] && echo 1 || echo "")"
+				EOF
             ;;
         timer)
             [[ -z "$schedule" || -z "$command" ]] && { log.error "add timer 需要 --schedule 与 --command"; exit 2; }
-            # 简单校验 cron 字段
             if ! validate_cron "$schedule"; then
                 log.error "schedule 格式不正确（应为 5 字段 cron）: $schedule"
                 exit 2
@@ -297,24 +618,19 @@ EOF
             ;;
         slimy)
             [[ -z "$command" ]] && { log.error "add slimy 需要 --command"; exit 2; }
-            cat > "$f" << 'EOF'
-#!/bin/bash
-EOF
-            printf '%s\n' "$command" >> "$f"
+            printf '#!/bin/bash\n%s\n' "$command" > "$f"
+            chmod +x "$f"
             ;;
         shot)
             [[ -z "$command" ]] && { log.error "add shot 需要 --command"; exit 2; }
-            cat > "$f" << 'EOF'
-#!/bin/bash
-EOF
-            printf '%s\n' "$command" >> "$f"
+            printf '#!/bin/bash\n%s\n' "$command" > "$f"
+            chmod +x "$f"
             ;;
     esac
 
-    log.ok "已创建 [$scope/$cat] $name -> $f"
+    log.ok "已创建 $(tag_scope "$scope")/$(tag_category "$cat") $name"
 }
 
-# 校验 5 字段 cron 表达式（仅基本格式检查）
 validate_cron() {
     local s="$1"
     local n
@@ -331,7 +647,7 @@ cmd_remove() {
             --system) scope="system";;
             --user)   scope="user";;
             --yes) yes=1;;
-            *) 
+            *)
                 if [[ -z "$cat" ]]; then cat="$1"
                 elif [[ -z "$name" ]]; then name="$1"
                 else log.error "remove: 多余参数 $1"; exit 2; fi;;
@@ -363,7 +679,7 @@ cmd_remove() {
     fi
 
     rm -f "$f"
-    log.ok "已删除 [$scope/$cat] $name"
+    log.ok "已删除 $(tag_scope "$scope")/$(tag_category "$cat") $name"
 }
 
 # ===================== import 子命令 =====================
@@ -389,20 +705,15 @@ cmd_import() {
     [[ -z "$src" ]] && { log.error "import 需要 <src-file>"; exit 2; }
     [[ ! -f "$src" ]] && { log.error "源文件不存在: $src"; exit 1; }
 
-    # 校验分类（slimy/shot/edging 可直接导入脚本；timer 文本也算可导入）
     local valid=0
     for c in "${CATEGORIES[@]}"; do [[ "$c" == "$cat" ]] && valid=1 && break; done
     [[ $valid -eq 0 ]] && { log.error "未知分类: $cat"; exit 2; }
 
     if [[ -z "$name" ]]; then
         name=$(basename "$src")
-        # 去掉已知扩展名
-        name="${name%.slimy}"
-        name="${name%.shot}"
-        name="${name%.edging}"
-        name="${name%.timer}"
-        name="${name%.sh}"
-        name="${name%.bash}"
+        name="${name%.slimy}"; name="${name%.shot}"
+        name="${name%.edging}"; name="${name%.timer}"
+        name="${name%.sh}"; name="${name%.bash}"
     fi
 
     local d f
@@ -423,7 +734,6 @@ cmd_import() {
             log.error "未找到 pkexec/sudo，无法提权修改系统配置"
             exit 1
         fi
-        # 由于源文件可能在用户侧，先复制到临时位置再交给 root
         local tmp
         tmp=$(mktemp "/tmp/k9-imp-XXXXXX.${cat}")
         cp "$src" "$tmp"
@@ -432,17 +742,14 @@ cmd_import() {
 
     ensure_dir "$d"
     cp "$src" "$f"
-    log.ok "已导入 [$scope/$cat] $name <- $src (-> $f)"
+    log.ok "已导入 $(tag_scope "$scope")/$(tag_category "$cat") $name"
 }
 
-# 内部：以 root 身份执行 import
 cmd__import_as_root() {
     local cat="$1" src="$2" name="$3"; shift 3
     local scope="system"
     while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --system|--yes) ;;
-        esac
+        case "$1" in --system|--yes) ;; esac
         shift
     done
     local d f
@@ -451,7 +758,60 @@ cmd__import_as_root() {
     ensure_dir "$d"
     cp "$src" "$f"
     rm -f "$src"
-    log.ok "已导入 [$scope/$cat] $name <- $f"
+    log.ok "已导入 $(tag_scope "$scope")/$(tag_category "$cat") $name"
+}
+
+# ===================== status 子命令 =====================
+cmd_status() {
+    echo
+    box_title "运行状态" 50
+
+    # 检查守护进程
+    local pid lockfile line
+    lockfile="/tmp/GXDE/gxde-k9/$UID/gxde-k9-daemon.lock"
+    if [[ -f "$lockfile" ]]; then
+        pid=$(cat "$lockfile" 2>/dev/null)
+        if [[ -n "$pid" && -e "/proc/$pid" ]]; then
+            local uptime
+            uptime=$(ps -o etime= -p "$pid" 2>/dev/null | xargs)
+            echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  K9 守护进程: ${C_GREEN}${C_BOLD}运行中${C_RESET}  PID=$pid  运行时间=$uptime"
+        else
+            echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  K9 守护进程: ${C_RED}${C_BOLD}未运行${C_RESET}  (存在过期锁文件)"
+            rm -f "$lockfile" 2>/dev/null
+        fi
+    else
+        echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  K9 守护进程: ${C_RED}${C_BOLD}未运行${C_RESET}"
+    fi
+
+    # 列出各分类数目
+    local total=0
+    for cat in "${CATEGORIES[@]}"; do
+        local cnt=0
+        for scope in user system; do
+            local d
+            d=$(category_dir "$cat" "$scope")
+            [[ -d "$d" ]] || continue
+            for f in "$d"/*."$cat"; do [[ -e "$f" ]] && cnt=$((cnt+1)); done
+        done
+        total=$((total+cnt))
+        echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  $(tag_category "$cat")  ${C_GRAY}${cnt} 个配置${C_RESET}"
+    done
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  ${C_DIM}配置总数: ${C_BOLD}${total}${C_RESET}"
+
+    # 日志统计
+    local log_count=0 log_size=0
+    if [[ -d "$LOG_DIR_USER" ]]; then
+        while IFS= read -r f; do
+            log_count=$((log_count+1))
+            local sz
+            sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            log_size=$((log_size+sz))
+        done < <(find "$LOG_DIR_USER" -name '*.log' -type f 2>/dev/null)
+    fi
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  ${C_DIM}日志文件: ${log_count} 个, ${log_size} bytes${C_RESET}"
+
+    box_bottom 50
+    echo
 }
 
 # ===================== logs 子命令 =====================
@@ -469,24 +829,68 @@ cmd_logs() {
 }
 
 logs_list() {
-    [[ ! -d "$LOG_DIR_USER" ]] && { echo "(暂无日志目录: $LOG_DIR_USER)"; return; }
-    local has=0
-    printf '%-10s %-30s %s\n' "CATEGORY" "NAME" "PATH"
-    printf '%-10s %-30s %s\n' "----------" "------------------------------" "----"
+    [[ ! -d "$LOG_DIR_USER" ]] && {
+        echo
+        echo -e "  ${C_DIM}${C_GRAY}暂无日志。K9 守护进程尚未运行，或未产生日志。${C_RESET}"
+        echo
+        return
+    }
+
+    local items=()
     for cat_dir in "$LOG_DIR_USER"*/; do
         [[ -d "$cat_dir" ]] || continue
         local cat
         cat=$(basename "$cat_dir")
         for f in "$cat_dir"*.log; do
             [[ -e "$f" ]] || continue
-            local n
+            local n sz
             n=$(basename "$f" .log)
-            printf '%-10s %-30s %s\n' "$cat" "$n" "$f"
-            has=1
+            sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            items+=("$cat|$n|$f|$sz")
         done
     done
-    [[ $has -eq 0 ]] && echo "(暂无任务日志)"
-    return 0
+
+    [[ ${#items[@]} -eq 0 ]] && {
+        echo
+        echo -e "  ${C_DIM}${C_GRAY}暂无任务日志。${C_RESET}"
+        echo
+        return
+    }
+
+    echo
+    local w=62
+    box_title "任务日志" $w
+
+    # 表头
+    printf "${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-6s${C_RESET}" "分类"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-22s${C_RESET}" "任务"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%6s${C_RESET}" "大小"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+    printf "${C_BOLD}%-20s${C_RESET}" "路径"
+    printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET}"
+    echo
+
+    hline $w
+
+    for item in "${items[@]}"; do
+        IFS='|' read -r cat name path size <<< "$item"
+        printf "${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        tag_category "$cat"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "${C_BOLD}%-22s${C_RESET}" "$name"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "${C_GRAY}%6s${C_RESET} " "$(numfmt_size "$size")"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET} "
+        printf "${C_GRAY}%-20s${C_RESET}" "$(basename "$path")"
+        printf " ${C_GRAY}${C_DIM}${T_MID}${C_RESET}"
+        echo
+    done
+
+    box_bottom $w
+    echo
 }
 
 logs_show() {
@@ -497,9 +901,19 @@ logs_show() {
         log.error "找不到日志: $f"
         exit 1
     fi
-    echo "# $f"
-    echo "------------------------------------------------------------"
-    cat "$f"
+    local sz
+    sz=$(stat -c%s "$f" 2>/dev/null || echo "?")
+    echo
+    box_title "日志: $cat/$name" 56
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  路径: ${C_GRAY}$f${C_RESET}"
+    echo -e "${C_GRAY}${C_DIM}${T_MID}${C_RESET}  大小: ${C_GRAY}$(numfmt_size "$sz")${C_RESET}"
+    box_bottom 56
+    echo
+    hline 56
+    while IFS= read -r line; do
+        printf "  %s\n" "$line"
+    done < "$f"
+    echo
 }
 
 logs_export() {
@@ -518,188 +932,417 @@ logs_clear() {
     [[ ! -d "$LOG_DIR_USER" ]] && { log.warn "日志目录不存在: $LOG_DIR_USER"; return; }
     rm -rf "${LOG_DIR_USER:?}/"*/  2>/dev/null
     find "$LOG_DIR_USER" -type f -name '*.log' -delete 2>/dev/null
-    log.ok "已清空日志目录: $LOG_DIR_USER"
+    log.ok "已清空所有日志"
 }
 
-# ===================== 交互式菜单 =====================
-read_choice() {
-    local prompt="$1"
-    read -r -p "$prompt" ans
-    echo "$ans"
-}
-
-# 交互式：选择分类
+# ===================== TUI 选择器 =====================
+# pick_category: stdout -> category; rc=1 取消
 pick_category() {
-    echo "可选分类:"
-    local i=1
+    local label="${1:-请选择分类}"
+    local items=()
     for c in "${CATEGORIES[@]}"; do
-        echo "  $i) $c"
-        i=$((i+1))
+        local desc=""
+        case "$c" in
+            slimy)  desc="周期执行（每 5 秒）";;
+            timer)  desc="crontab 定时任务";;
+            shot)   desc="启动时一次性执行";;
+            edging) desc="服务保活（拉起进程）";;
+        esac
+        items+=("$c" "$desc")
     done
-    local ans
-    ans=$(read_choice "请输入分类编号: ")
-    case "$ans" in
-        1) echo "slimy";;
-        2) echo "timer";;
-        3) echo "shot";;
-        4) echo "edging";;
-        *) echo "";;
-    esac
+    tui_menu "$label" "↑↓ 移动  回车 确认  ESC 取消" "${items[@]}"
 }
 
+# pick_scope: stdout -> user|system; rc=1 取消
+pick_scope() {
+    local label="${1:-选择位置}"
+    tui_menu "$label" "选择配置存放位置" \
+        "user"   "用户侧（$BASE_DIR_USER，无需提权）" \
+        "system" "系统侧（/usr/share/gxde-k9，需提权）"
+}
+
+# pick_task: stdout -> task name; rc=1 取消
+# 参数: <category> <scope>
+pick_task() {
+    local cat="$1" scope="${2:-user}"
+    local d
+    d=$(category_dir "$cat" "$scope")
+    [[ -d "$d" ]] || { tui_msgbox "错误" "目录不存在: $d"; return 1; }
+
+    local items=()
+    local f n sz mtime
+    for f in "$d"/*."$cat"; do
+        [[ -f "$f" ]] || continue
+        n=$(basename "$f" ."$cat")
+        sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+        items+=("$n" "$(numfmt_size "$sz")  |  $mtime")
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        tui_msgbox "无任务" "当前 $scope 的 $cat 没有可选项"
+        return 1
+    fi
+    tui_menu "选择 $cat 任务" "来源: $scope  |  共 $(( ${#items[@]} / 2 )) 项" "${items[@]}"
+}
+
+# pick_task_multi: stdout -> 选中任务名（换行分隔）; rc=1 取消
+# 参数: <category> <scope>
+pick_task_multi() {
+    local cat="$1" scope="${2:-user}"
+    local d
+    d=$(category_dir "$cat" "$scope")
+    [[ -d "$d" ]] || { tui_msgbox "错误" "目录不存在: $d"; return 1; }
+
+    local items=()
+    local f n mtime
+    for f in "$d"/*."$cat"; do
+        [[ -f "$f" ]] || continue
+        n=$(basename "$f" ."$cat")
+        mtime=$(stat -c%y "$f" 2>/dev/null | cut -d. -f1)
+        items+=("$n" "$mtime" "off")
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        tui_msgbox "无任务" "当前 $scope 的 $cat 没有可选项"
+        return 1
+    fi
+    tui_checklist "批量选择 $cat 任务" "空格 切换选中  回车 确认  ESC 取消\n来源: $scope" "${items[@]}"
+}
+
+# pick_log_task: 从 logs 目录选择任务; stdout -> "cat name"; rc=1 取消
+pick_log_task() {
+    [[ -d "$LOG_DIR_USER" ]] || { tui_msgbox "无日志" "日志目录不存在:\n$LOG_DIR_USER"; return 1; }
+
+    local items=()
+    local cat_dir cat f n sz
+    for cat_dir in "$LOG_DIR_USER"*/; do
+        [[ -d "$cat_dir" ]] || continue
+        cat=$(basename "$cat_dir")
+        for f in "$cat_dir"*.log; do
+            [[ -f "$f" ]] || continue
+            n=$(basename "$f" .log)
+            sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            items+=("${cat}/${n}" "$(numfmt_size "$sz")")
+        done
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        tui_msgbox "无日志" "尚未产生任何任务日志"
+        return 1
+    fi
+
+    local sel
+    sel=$(tui_menu "选择日志" "↑↓ 移动  回车 查看" "${items[@]}") || return 1
+    # sel 形如 "cat/name"
+    echo "${sel%%/*} ${sel#*/}"
+}
+
+# ---------------------------------------------------------------
+#  交互式新增
+# ---------------------------------------------------------------
 interactive_add() {
-    echo "==== 新增配置 ===="
-    local cat scope="user"
-    cat=$(pick_category)
-    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
+    local cat scope name
+    cat=$(pick_category "新增配置 - 选择分类") || return
+    scope=$(pick_scope "新增配置 - 选择位置") || return
 
-    local name
-    name=$(read_choice "请输入任务名称: ")
-    [[ -z "$name" ]] && { log.warn "名称不能为空"; return; }
-
-    echo "目标位置: 1) 用户侧 (默认)  2) 系统侧 /usr/share (需提权)"
-    local pos
-    pos=$(read_choice "请选择 [1]: ")
-    [[ "$pos" == "2" ]] && scope="system"
+    name=$(tui_inputbox "新增 $cat - 任务名称" "请输入任务名称（不留空）") || return
+    [[ -z "$name" ]] && { tui_msgbox "提示" "名称不能为空"; return; }
 
     case "$cat" in
         edging)
-            local target no_systemd="n"
-            target=$(read_choice "请输入要拉起的命令 (TARGET_PROCESS): ")
-            read -r -p "若 systemd 存在则不启动? (y/N): " no_systemd
+            local target
+            target=$(tui_inputbox "edging - TARGET_PROCESS" "请输入要拉起的命令") || return
+            [[ -z "$target" ]] && { tui_msgbox "提示" "target 不能为空"; return; }
             local args=(add edging --name "$name" --target "$target")
-            [[ "$no_systemd" == "y" || "$no_systemd" == "Y" ]] && args+=(--no-systemd)
+            # 若 systemd 已存在则跳过
+            if tui_yesno "edging - systemd 检测" "若环境已存在 systemd，是否跳过启动该 edging 任务？\n（常见于容器/proot 环境）"; then
+                args+=(--no-systemd)
+            fi
             [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
         timer)
             local schedule command
-            schedule=$(read_choice "请输入 cron 表达式 (5 字段, 如 '* * * * *'): ")
-            command=$(read_choice "请输入要执行的命令: ")
+            schedule=$(tui_inputbox "timer - cron 表达式" \
+                "请输入 5 字段 cron 表达式\n\n示例：\n  * * * * *        每分钟\n  */5 * * * *      每 5 分钟\n  0 9 * * 1-5      工作日 9 点\n  0 */2 * * *      每 2 小时") || return
+            [[ -z "$schedule" ]] && { tui_msgbox "提示" "schedule 不能为空"; return; }
+            if ! validate_cron "$schedule"; then
+                tui_msgbox "格式错误" "schedule 应为 5 字段 cron 表达式\n输入: $schedule"
+                return
+            fi
+            command=$(tui_inputbox "timer - 执行命令" "请输入定时执行的命令") || return
+            [[ -z "$command" ]] && { tui_msgbox "提示" "command 不能为空"; return; }
             local args=(add timer --name "$name" --schedule "$schedule" --command "$command")
             [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
         slimy|shot)
             local command
-            command=$(read_choice "请输入要执行的命令（将生成最简 $cat 脚本）: ")
+            command=$(tui_inputbox "$cat - 执行命令" "请输入要执行的命令\n（slimy 会每 5 秒触发一次；shot 仅启动时执行一次）") || return
+            [[ -z "$command" ]] && { tui_msgbox "提示" "command 不能为空"; return; }
             local args=(add "$cat" --name "$name" --command "$command")
             [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
     esac
+
+    tui_msgbox "完成" "操作结束，按回车返回主菜单"
 }
 
+# ---------------------------------------------------------------
+#  交互式导入
+# ---------------------------------------------------------------
 interactive_import() {
-    echo "==== 从外部导入脚本 ===="
-    local cat scope="user"
-    cat=$(pick_category)
-    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
+    local cat src name scope
+    cat=$(pick_category "导入脚本 - 选择分类") || return
 
-    local src name
-    src=$(read_choice "请输入要导入的脚本文件路径: ")
-    [[ ! -f "$src" ]] && { log.error "文件不存在: $src"; return; }
+    src=$(tui_inputbox "导入 $cat - 文件路径" "请输入要导入的脚本文件路径") || return
+    [[ ! -f "$src" ]] && { tui_msgbox "错误" "文件不存在:\n$src"; return; }
 
-    read -r -p "请输入任务名称（留空则用文件名）: " name
-
-    echo "目标位置: 1) 用户侧 (默认)  2) 系统侧 /usr/share (需提权)"
-    local pos
-    pos=$(read_choice "请选择 [1]: ")
-    [[ "$pos" == "2" ]] && scope="system"
+    name=$(tui_inputbox "导入 $cat - 任务名称" "留空则使用文件名") || true
+    [[ -z "$name" ]] && name=""
+    scope=$(pick_scope "导入 $cat - 选择位置") || return
 
     local args=(import "$cat" "$src")
     [[ -n "$name" ]] && args+=(--name "$name")
     [[ "$scope" == "system" ]] && args+=(--system)
     "$0" "${args[@]}"
+
+    tui_msgbox "完成" "操作结束，按回车返回主菜单"
 }
 
+# ---------------------------------------------------------------
+#  交互式删除（单删/批删）
+# ---------------------------------------------------------------
 interactive_remove() {
-    echo "==== 删除配置 ===="
-    "$0" list
-    echo
-    local cat name scope="user"
-    cat=$(pick_category)
-    [[ -z "$cat" ]] && { log.warn "无效选择"; return; }
-    name=$(read_choice "请输入任务名称: ")
+    local cat scope
+    cat=$(pick_category "删除配置 - 选择分类") || return
+    scope=$(pick_scope "删除 $cat - 选择位置") || return
 
-    echo "来源: 1) 用户侧 (默认)  2) 系统侧 /usr/share"
-    local pos
-    pos=$(read_choice "请选择 [1]: ")
-    [[ "$pos" == "2" ]] && scope="system"
+    # 选择模式
+    local mode
+    mode=$(tui_menu "删除 $cat - 选择模式" "请选择删除模式" \
+        "single" "删除单个任务" \
+        "batch"  "批量删除（多选）") || return
 
-    local args=(remove "$cat" "$name")
-    [[ "$scope" == "system" ]] && args+=(--system)
-    "$0" "${args[@]}"
+    if [[ "$mode" == "batch" ]]; then
+        local selected
+        selected=$(pick_task_multi "$cat" "$scope") || return
+        [[ -z "$selected" ]] && { tui_msgbox "提示" "未选中任何任务"; return; }
+
+        # 统计并确认
+        local count=0 list=""
+        local n
+        while IFS= read -r n; do
+            [[ -z "$n" ]] && continue
+            count=$((count+1))
+            list+="  • $n\n"
+        done <<< "$selected"
+
+        if ! tui_yesno "确认批量删除" "即将删除 $count 个 $cat 任务：\n$list\n此操作不可撤销，是否继续？"; then
+            tui_msgbox "已取消" "用户取消操作"
+            return
+        fi
+        local rc=0
+        while IFS= read -r n; do
+            [[ -z "$n" ]] && continue
+            local args=(remove "$cat" "$n")
+            [[ "$scope" == "system" ]] && args+=(--system)
+            "$0" "${args[@]}" || rc=$?
+        done <<< "$selected"
+        tui_msgbox "完成" "批量删除已结束（最后一次退出码 $rc）\n按回车返回主菜单"
+        return
+    fi
+
+    # 单删
+    local name
+    name=$(pick_task "$cat" "$scope") || return
+    if tui_yesno "确认删除" "即将删除：\n  $cat / $name  ($scope)\n\n此操作不可撤销，是否继续？"; then
+        local args=(remove "$cat" "$name")
+        [[ "$scope" == "system" ]] && args+=(--system)
+        "$0" "${args[@]}"
+    else
+        tui_msgbox "已取消" "用户取消操作"
+    fi
+    tui_msgbox "完成" "操作结束，按回车返回主菜单"
 }
 
-interactive_logs() {
-    echo "==== 日志管理 ===="
-    echo "1) 列出所有日志"
-    echo "2) 查看某任务日志"
-    echo "3) 导出某任务日志"
-    echo "4) 清空所有日志"
-    local sub
-    sub=$(read_choice "请选择 [1]: ")
-    case "${sub:-1}" in
-        1) "$0" logs list;;
-        2)
-            local cat name
-            cat=$(pick_category)
-            name=$(read_choice "请输入任务名称: ")
-            "$0" logs show "$cat" "$name"
+# ---------------------------------------------------------------
+#  交互式查看配置
+# ---------------------------------------------------------------
+interactive_show() {
+    local cat scope name
+    cat=$(pick_category "查看配置 - 选择分类") || return
+    scope=$(pick_scope "查看 $cat - 选择来源") || return
+    name=$(pick_task "$cat" "$scope") || return
+
+    local d f
+    d=$(category_dir "$cat" "$scope")
+    f="${d}${name}.${cat}"
+    if [[ ! -f "$f" ]]; then
+        tui_msgbox "错误" "找不到配置:\n$f"
+        return
+    fi
+
+    # 构造临时文件：元信息 + 内容
+    local tmp
+    tmp=$(mktemp /tmp/k9-show-XXXXXX.txt)
+    {
+        echo "================== 配置元信息 =================="
+        echo "分类:   $cat"
+        echo "名称:   $name"
+        echo "来源:   $scope"
+        echo "路径:   $f"
+        echo "大小:   $(stat -c%s "$f" 2>/dev/null || echo '?') bytes"
+        echo "修改:   $(stat -c%y "$f" 2>/dev/null | cut -d. -f1)"
+        [[ -x "$f" && "$cat" != "timer" ]] && echo "可执行: 是"
+        echo "================== 文件内容 =================="
+        cat "$f"
+        echo "==============================================="
+    } > "$tmp"
+    tui_textbox "$cat / $name" "$tmp"
+    rm -f "$tmp"
+}
+
+# ---------------------------------------------------------------
+#  交互式列表
+# ---------------------------------------------------------------
+interactive_list() {
+    local mode
+    mode=$(tui_menu "列出任务" "请选择列出方式" \
+        "all"    "列出所有分类" \
+        "filter" "按分类过滤" \
+        "json"   "JSON 输出（全部）" \
+        "json1"  "JSON 输出（按分类）") || return
+
+    case "$mode" in
+        all)
+            "$0" list | tui_show_stdin "任务列表"
             ;;
-        3)
-            local cat name dest
-            cat=$(pick_category)
-            name=$(read_choice "请输入任务名称: ")
-            dest=$(read_choice "请输入导出目标文件路径: ")
-            "$0" logs export "$cat" "$name" "$dest"
+        filter)
+            local cat
+            cat=$(pick_category "选择分类") || return
+            "$0" list --category "$cat" | tui_show_stdin "$cat 任务列表"
             ;;
-        4) "$0" logs clear;;
-        *) log.warn "无效选择";;
+        json)
+            "$0" list --json | tui_show_stdin "任务列表 JSON"
+            ;;
+        json1)
+            local cat
+            cat=$(pick_category "选择分类") || return
+            "$0" list --category "$cat" --json | tui_show_stdin "$cat 任务列表 JSON"
+            ;;
     esac
 }
 
+# ---------------------------------------------------------------
+#  交互式日志管理
+# ---------------------------------------------------------------
+interactive_logs() {
+    while true; do
+        local sub
+        sub=$(tui_menu "日志管理" "请选择操作" \
+            "list"   "列出所有日志" \
+            "show"   "查看某任务日志" \
+            "export" "导出日志" \
+            "clear"  "清空所有日志" \
+            "back"   "返回主菜单") || return
+
+        case "$sub" in
+            list)
+                "$0" logs list | tui_show_stdin "任务日志"
+                ;;
+            show)
+                local sel cat name f
+                sel=$(pick_log_task) || continue
+                cat="${sel%% *}"
+                name="${sel#* }"
+                f="${LOG_DIR_USER}${cat}/${name}.log"
+                [[ -f "$f" ]] || { tui_msgbox "错误" "找不到日志:\n$f"; continue; }
+                local tmp
+                tmp=$(mktemp /tmp/k9-log-XXXXXX.txt)
+                {
+                    echo "================== 日志信息 =================="
+                    echo "分类:   $cat"
+                    echo "任务:   $name"
+                    echo "路径:   $f"
+                    echo "大小:   $(stat -c%s "$f" 2>/dev/null || echo '?') bytes"
+                    echo "修改:   $(stat -c%y "$f" 2>/dev/null | cut -d. -f1)"
+                    echo "================== 日志内容 =================="
+                    cat "$f"
+                    echo "==============================================="
+                } > "$tmp"
+                tui_textbox "日志: $cat/$name" "$tmp"
+                rm -f "$tmp"
+                ;;
+            export)
+                local sel cat name dest
+                sel=$(pick_log_task) || continue
+                cat="${sel%% *}"
+                name="${sel#* }"
+                dest=$(tui_inputbox "导出路径" "请输入导出目标文件路径" "$HOME/${cat}-${name}.log") || continue
+                "$0" logs export "$cat" "$name" "$dest"
+                tui_msgbox "完成" "导出完成，按回车返回"
+                ;;
+            clear)
+                if tui_yesno "确认清空" "即将清空所有任务日志，此操作不可撤销，是否继续？"; then
+                    "$0" logs clear
+                    tui_msgbox "完成" "已清空所有日志，按回车返回"
+                else
+                    tui_msgbox "已取消" "用户取消操作"
+                fi
+                ;;
+            back)
+                return
+                ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------
+#  主菜单
+# ---------------------------------------------------------------
 interactive_menu() {
     while true; do
-        echo
-        echo "=========== GXDE K9 Chocker ==========="
-        echo "1) 列出所有任务/配置"
-        echo "2) 查看某任务配置内容"
-        echo "3) 新增配置"
-        echo "4) 从外部导入脚本"
-        echo "5) 删除配置"
-        echo "6) 日志管理"
-        echo "0) 退出"
-        echo "======================================="
-        local c
-        c=$(read_choice "请选择: ")
-        case "$c" in
-            1) "$0" list;;
-            2)
-                local cat name scope="user" pos
-                cat=$(pick_category)
-                name=$(read_choice "请输入任务名称: ")
-                echo "来源: 1) 用户侧 (默认)  2) 系统侧"
-                pos=$(read_choice "请选择 [1]: ")
-                [[ "$pos" == "2" ]] && scope="system"
-                local args=(show "$cat" "$name")
-                [[ "$scope" == "system" ]] && args+=(--system)
-                "$0" "${args[@]}"
+        _refresh_backtitle
+        local choice
+        choice=$(tui_menu "GXDE K9 Chocker — 主菜单" "↑↓ 移动  回车 确认  ESC 退出" \
+            "list"    "列出任务/配置" \
+            "show"    "查看配置内容" \
+            "add"     "新增配置" \
+            "import"  "从外部导入脚本" \
+            "remove"  "删除配置（支持批量）" \
+            "logs"    "日志管理" \
+            "status"  "查看运行状态" \
+            "quit"    "退出") || {
+            # ESC 或取消 = 退出
+            echo -e "${C_GREEN}${C_BOLD}再见！${C_RESET}"
+            exit 0
+        }
+
+        case "$choice" in
+            list)    interactive_list;;
+            show)    interactive_show;;
+            add)     interactive_add;;
+            import)  interactive_import;;
+            remove)  interactive_remove;;
+            logs)    interactive_logs;;
+            status)  "$0" status | tui_show_stdin "运行状态";;
+            quit)
+                echo -e "${C_GREEN}${C_BOLD}再见！${C_RESET}"
+                exit 0
                 ;;
-            3) interactive_add;;
-            4) interactive_import;;
-            5) interactive_remove;;
-            6) interactive_logs;;
-            0) echo "再见"; exit 0;;
-            *) log.warn "无效选择";;
         esac
     done
 }
 
 # ===================== 入口 =====================
 main() {
+    detect_tui_backend
+
     if [[ $# -eq 0 ]]; then
+        require_tui
         interactive_menu
         return
     fi
@@ -712,8 +1355,9 @@ main() {
         import)   shift; cmd_import "$@";;
         _import_as_root) shift; cmd__import_as_root "$@";;
         logs)     shift; cmd_logs "$@";;
+        status)   cmd_status;;
         help|-h|--help) print_help;;
-        version|-v) echo "$PROG_NAME v$VERSION";;
+        version|--version|-v) echo "${PROG_NAME} v${VERSION}";;
         *)
             log.error "未知命令: $1"
             print_help

@@ -1,0 +1,27 @@
+#!/bin/bash
+# gxde-k9 守护进程 bash 自动补全
+# 安装至 /usr/share/bash-completion/completions/gxde-k9
+
+_gxde_k9() {
+    local cur prev words cword
+    _init_completion || return
+
+    local opts="--base-dir --pid-dir --termux --log-dir --log-max-size --no-logs --help --version -h -v"
+
+    case "$prev" in
+        --base-dir|--pid-dir|--log-dir)
+            # 补全目录路径
+            _filedir -d
+            return
+            ;;
+        --log-max-size)
+            # 数字参数
+            return
+            ;;
+        *)
+            COMPREPLY=($(compgen -W "${opts}" -- "$cur"))
+            return
+            ;;
+    esac
+} &&
+complete -F _gxde_k9 gxde-k9

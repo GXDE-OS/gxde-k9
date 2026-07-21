@@ -1,0 +1,167 @@
+#!/bin/bash
+# gxde-k9-chocker bash 自动补全
+# 安装至 /usr/share/bash-completion/completions/gxde-k9-chocker
+
+_gxde_k9_chocker() {
+    local cur prev words cword
+    _init_completion || return
+
+    local categories="slimy timer shot edging"
+    local subcmds="list show add remove import logs status help version"
+    local shared_opts="--system --user --yes"
+
+    # 第一级参数：子命令
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "${subcmds}" -- "$cur"))
+        return
+    fi
+
+    # 第二级起，按子命令分发
+    case "${words[1]}" in
+        list)
+            local opts="--category --json ${shared_opts}"
+            case "$prev" in
+                --category)
+                    COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                    return
+                    ;;
+                *)
+                    COMPREPLY=($(compgen -W "${opts}" -- "$cur"))
+                    return
+                    ;;
+            esac
+            ;;
+
+        show)
+            # show <category> <name> [--system|--user]
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                return
+            fi
+            # 第三个参数补全任务名
+            if [[ $cword -eq 3 ]]; then
+                local cat="${words[2]}"
+                local scope="user"
+                # 检查是否有 --system
+                for ((i=3; i<cword; i++)); do
+                    [[ "${words[i]}" == "--system" ]] && scope="system"
+                done
+                local dir="${HOME}/.local/share/GXDE/gxde-k9/${cat}"
+                [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
+                if [[ -d "$dir" ]]; then
+                    local files=()
+                    for f in "$dir"/*."$cat"; do
+                        [[ -f "$f" ]] || continue
+                        files+=("$(basename "$f" ."$cat")")
+                    done
+                    COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
+                fi
+                return
+            fi
+            COMPREPLY=($(compgen -W "${shared_opts}" -- "$cur"))
+            ;;
+
+        add)
+            # add <category> --name N [--target ...] [--schedule ...] [--command ...]
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                return
+            fi
+            local cat="${words[2]}"
+            local add_opts="--name"
+            case "$cat" in
+                edging) add_opts+=" --target --no-systemd" ;;
+                timer)  add_opts+=" --schedule --command" ;;
+                slimy|shot) add_opts+=" --command" ;;
+            esac
+            add_opts+=" ${shared_opts}"
+            COMPREPLY=($(compgen -W "${add_opts}" -- "$cur"))
+            ;;
+
+        remove)
+            # remove <category> <name> [--system|--user]
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                return
+            fi
+            if [[ $cword -eq 3 ]]; then
+                local cat="${words[2]}"
+                local scope="user"
+                for ((i=3; i<cword; i++)); do
+                    [[ "${words[i]}" == "--system" ]] && scope="system"
+                done
+                local dir="${HOME}/.local/share/GXDE/gxde-k9/${cat}"
+                [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
+                if [[ -d "$dir" ]]; then
+                    local files=()
+                    for f in "$dir"/*."$cat"; do
+                        [[ -f "$f" ]] || continue
+                        files+=("$(basename "$f" ."$cat")")
+                    done
+                    COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
+                fi
+                return
+            fi
+            COMPREPLY=($(compgen -W "${shared_opts}" -- "$cur"))
+            ;;
+
+        import)
+            # import <category> <file> [--name N] [--system|--user]
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                return
+            fi
+            if [[ $cword -eq 3 ]]; then
+                _filedir
+                return
+            fi
+            COMPREPLY=($(compgen -W "--name ${shared_opts}" -- "$cur"))
+            ;;
+
+        logs)
+            # logs <subcmd> [...]
+            local log_subcmds="list show export clear"
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "${log_subcmds}" -- "$cur"))
+                return
+            fi
+            case "${words[2]}" in
+                show|export)
+                    if [[ $cword -eq 3 ]]; then
+                        COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
+                        return
+                    fi
+                    if [[ $cword -eq 4 ]]; then
+                        local cat="${words[3]}"
+                        local logdir="${HOME}/.local/share/GXDE/gxde-k9/logs/${cat}"
+                        if [[ -d "$logdir" ]]; then
+                            local files=()
+                            for f in "$logdir"/*.log; do
+                                [[ -f "$f" ]] || continue
+                                files+=("$(basename "$f" .log)")
+                            done
+                            COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
+                        fi
+                        return
+                    fi
+                    if [[ "${words[2]}" == "export" && $cword -eq 5 ]]; then
+                        _filedir
+                        return
+                    fi
+                    ;;
+            esac
+            ;;
+
+        status|help|version)
+            # 这些子命令无后续参数
+            return
+            ;;
+
+        *)
+            # 未知子命令，尝试补全子命令
+            COMPREPLY=($(compgen -W "${subcmds}" -- "$cur"))
+            return
+            ;;
+    esac
+} &&
+complete -F _gxde_k9_chocker gxde-k9-chocker
