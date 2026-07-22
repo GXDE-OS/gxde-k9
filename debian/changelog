@@ -1,3 +1,10 @@
+gxde-k9 (1.9.2) UNRELEASED; urgency=low
+
+  * Fix: disable now kills running processes before renaming to .disabled
+  * Update help text to reflect the new disable behavior
+
+ -- shenmo <shenmo@spark-app.store>  Wed, 22 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.1) UNRELEASED; urgency=low
 
   * Refine Chocker lifecycle controls: enable/disable now only rename tasks,

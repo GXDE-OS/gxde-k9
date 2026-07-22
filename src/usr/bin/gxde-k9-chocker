@@ -7,7 +7,7 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.9.1"
+VERSION="1.9.2"
 
 BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
 BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
@@ -362,7 +362,7 @@ ${C_DIM}子命令:${C_RESET}
   restart    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止后立即启动已启用任务${C_RESET}
   stop       <category> <name> [--system|--user] [--yes] ${C_GRAY}仅停止关联进程，保留任务状态${C_RESET}
   enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务（改后缀）${C_RESET}
-  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}仅禁用任务（改后缀）${C_RESET}
+  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止关联进程并禁用任务${C_RESET}
   remove     <category> <name> [--system|--user] [--yes] ${C_GRAY}停止并删除配置${C_RESET}
   import     <category> <file> [--name N]     ${C_GRAY}从外部导入脚本${C_RESET}
   logs       <子命令> [...]                    ${C_GRAY}日志查看与导出${C_RESET}
@@ -380,7 +380,7 @@ ${C_DIM}通用选项:${C_RESET}
 
 ${C_DIM}任务状态与停止范围:${C_RESET}
   启用任务使用 .<category>，禁用任务使用 .<category>.disabled；守护程序仅扫描启用文件。
-  enable/disable 只改文件名后缀，不启动或停止任务。start/restart 仅适用于已启用的 edging、slimy、shot；
+  enable 仅改文件名后缀，不启动任务。disable 会先停止关联进程再改文件名后缀。start/restart 仅适用于已启用的 edging、slimy、shot；
   timer 仅支持 enable/disable，按计划由守护程序扫描。stop 只结束安全记录或明确引用任务文件的进程，
   不改后缀；edging/slimy 停止后仍会被守护程序重新启动，需 disable 才能永久阻止。
 
@@ -471,6 +471,7 @@ cmd_enable_disable() {
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
     if [[ "$action" == "disable" ]]; then
         [[ -f "$TASK_ENABLED" ]] || { [[ -f "$TASK_DISABLED" ]] && { log.ok "任务已禁用"; return; }; log.error "找不到任务: $TASK_ENABLED"; exit 1; }
+        stop_task_processes "$ACTION_CAT" "$ACTION_NAME" "$TASK_ENABLED"
         mv -- "$TASK_ENABLED" "$TASK_DISABLED"
     else
         [[ -f "$TASK_DISABLED" ]] || { [[ -f "$TASK_ENABLED" ]] && { log.ok "任务已启用"; return; }; log.error "找不到任务: $TASK_DISABLED"; exit 1; }
