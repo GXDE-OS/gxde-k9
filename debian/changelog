@@ -1,3 +1,13 @@
+gxde-k9 (1.9.4) UNRELEASED; urgency=low
+
+  * Chocker TUI: add Ctrl+C quick exit with SIGINT trap and terminal restore.
+  * Chocker TUI: remember last-selected menu item via --default-item so
+    returning from a submenu keeps the cursor on the previous choice.
+  * Chocker TUI: highlight shortcut key (tag first letter) in menu
+    descriptions — bold via \Zb in dialog, [X] prefix in whiptail.
+
+ -- shenmo <shenmo@spark-app.store>  Thu, 23 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.3) UNRELEASED; urgency=low
 
   * Chocker: start/stop/restart no longer require privilege escalation for
