@@ -2,6 +2,21 @@
 # gxde-k9-chocker bash 自动补全
 # 安装至 /usr/share/bash-completion/completions/gxde-k9-chocker
 
+# 收集某分类下 user 和 system 的所有任务名（去重）
+_k9_collect_task_names() {
+    local cat="$1"
+    local d n
+    for d in "${HOME}/.local/share/GXDE/gxde-k9/${cat}" "/usr/share/gxde-k9/${cat}"; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*."$cat" "$d"/*."$cat".disabled; do
+            [[ -f "$f" ]] || continue
+            n=$(basename "$f")
+            n="${n%.${cat}.disabled}"; n="${n%.${cat}}"
+            echo "$n"
+        done
+    done | sort -u
+}
+
 _gxde_k9_chocker() {
     local cur prev words cword
     _init_completion || return
@@ -44,22 +59,7 @@ _gxde_k9_chocker() {
             fi
             if [[ $cword -eq 3 ]]; then
                 local cat="${words[2]}"
-                local scope="user"
-                for ((i=3; i<cword; i++)); do
-                    [[ "${words[i]}" == "--system" ]] && scope="system"
-                done
-                local dir="${HOME}/.local/share/GXDE/gxde-k9/${cat}"
-                [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
-                if [[ -d "$dir" ]]; then
-                    local files=()
-                    for f in "$dir"/*."$cat" "$dir"/*."$cat".disabled; do
-                        [[ -f "$f" ]] || continue
-                        local n=$(basename "$f")
-                        n="${n%.${cat}.disabled}"; n="${n%.${cat}}"
-                        files+=("$n")
-                    done
-                    COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
-                fi
+                COMPREPLY=($(compgen -W "$(_k9_collect_task_names "$cat")" -- "$cur"))
                 return
             fi
             COMPREPLY=($(compgen -W "${shared_opts}" -- "$cur"))
@@ -80,33 +80,6 @@ _gxde_k9_chocker() {
             esac
             add_opts+=" ${shared_opts}"
             COMPREPLY=($(compgen -W "${add_opts}" -- "$cur"))
-            ;;
-
-        remove)
-            # remove <category> <name> [--system|--user]
-            if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "${categories}" -- "$cur"))
-                return
-            fi
-            if [[ $cword -eq 3 ]]; then
-                local cat="${words[2]}"
-                local scope="user"
-                for ((i=3; i<cword; i++)); do
-                    [[ "${words[i]}" == "--system" ]] && scope="system"
-                done
-                local dir="${HOME}/.local/share/GXDE/gxde-k9/${cat}"
-                [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
-                if [[ -d "$dir" ]]; then
-                    local files=()
-                    for f in "$dir"/*."$cat"; do
-                        [[ -f "$f" ]] || continue
-                        files+=("$(basename "$f" ."$cat")")
-                    done
-                    COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
-                fi
-                return
-            fi
-            COMPREPLY=($(compgen -W "${shared_opts}" -- "$cur"))
             ;;
 
         import)
@@ -162,20 +135,8 @@ _gxde_k9_chocker() {
                 return
             fi
             if [[ $cword -eq 3 ]]; then
-                local cat="${words[2]}" scope="user" dir
-                for ((i=3; i<cword; i++)); do [[ "${words[i]}" == "--system" ]] && scope="system"; done
-                dir="${HOME}/.local/share/GXDE/gxde-k9/${cat}"
-                [[ "$scope" == "system" ]] && dir="/usr/share/gxde-k9/${cat}"
-                if [[ -d "$dir" ]]; then
-                    local files=()
-                    for f in "$dir"/*."$cat" "$dir"/*."$cat".disabled; do
-                        [[ -f "$f" ]] || continue
-                        local n=$(basename "$f")
-                        n="${n%.${cat}.disabled}"; n="${n%.${cat}}"
-                        files+=("$n")
-                    done
-                    COMPREPLY=($(compgen -W "${files[*]}" -- "$cur"))
-                fi
+                local cat="${words[2]}"
+                COMPREPLY=($(compgen -W "$(_k9_collect_task_names "$cat")" -- "$cur"))
                 return
             fi
             COMPREPLY=($(compgen -W "--system --user" -- "$cur"))
