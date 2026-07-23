@@ -1,3 +1,16 @@
+gxde-k9 (2.0.0) UNRELEASED; urgency=low
+
+  * Chocker TUI: menus now remember the previously selected item when
+    returning from a sub-menu (main menu, task list, action submenu,
+    logs submenu and log browser) via whiptail/dialog --default-item.
+  * Chocker TUI: add and import no longer offer a system-scope picker;
+    K9 is a user-space service manager and configurations are created
+    user-side only from the TUI. The CLI retains --system for packagers.
+  * Update help text: only enable/disable/remove require privilege
+    escalation for system-scope tasks; add/import create user configs.
+
+ -- shenmo <shenmo@spark-app.store>  Thu, 23 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.3) UNRELEASED; urgency=low
 
   * Chocker: start/stop/restart no longer require privilege escalation for

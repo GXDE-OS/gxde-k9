@@ -7,7 +7,7 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.9.3"
+VERSION="2.0.0"
 
 BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
 BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
@@ -155,6 +155,8 @@ EOF
 # ===================== TUI 包装器 =====================
 # 公共 backtitle（每次进入主菜单时刷新）
 _BACKTITLE="GXDE K9 Chocker v${VERSION}"
+# 菜单默认高亮项（被 tui_menu 消费后自动清空）
+_TUI_DEFAULT_ITEM=""
 
 _refresh_backtitle() {
     local user_count=0 sys_count=0 log_count=0
@@ -207,6 +209,7 @@ _tui_run() {
 }
 
 # tui_menu <title> <text> <tag1> <desc1> [<tag2> <desc2> ...]
+# 可通过全局变量 _TUI_DEFAULT_ITEM 设置默认高亮项（调用后自动清空）
 # 返回（stdout）: 选中的 tag；取消时返回码 1
 tui_menu() {
     local title="$1"; shift
@@ -214,7 +217,14 @@ tui_menu() {
     local count=$(( $# / 2 ))
     local h w
     read -r h w < <(_tui_size "$count")
-    _tui_run --backtitle "${_BACKTITLE}" --title "$title" --menu "$text" "$h" "$w" "$count" "$@" 3>&1 1>&2 2>&3
+    local default_args=()
+    if [[ -n "${_TUI_DEFAULT_ITEM:-}" ]]; then
+        default_args=(--default-item "$_TUI_DEFAULT_ITEM")
+    fi
+    _tui_run --backtitle "${_BACKTITLE}" "${default_args[@]}" --title "$title" --menu "$text" "$h" "$w" "$count" "$@" 3>&1 1>&2 2>&3
+    local rc=$?
+    _TUI_DEFAULT_ITEM=""
+    return $rc
 }
 
 # tui_checklist <title> <text> <tag1> <desc1> <state1> [...]
@@ -380,9 +390,10 @@ ${C_DIM}通用选项:${C_RESET}
   --json            JSON 输出（list 子命令）
 
 ${C_DIM}提权说明:${C_RESET}
-  ${C_GRAY}system 指系统安装的用户态服务（配置位于 /usr/share/gxde-k9）。其中仅 enable/disable/remove${C_RESET}
-  ${C_GRAY}会修改系统配置文件，需提权；add/import 创建系统配置同样需提权。${C_RESET}
+  ${C_GRAY}system 指系统安装的用户态服务（配置位于 /usr/share/gxde-k9）。K9 为用户态服务管理器，${C_RESET}
+  ${C_GRAY}仅 enable/disable/remove 会修改系统配置文件，需提权。${C_RESET}
   ${C_GRAY}start/stop/restart 为运行时操作，仅读取配置并管理进程，无需提权。${C_RESET}
+  ${C_GRAY}add/import 仅创建用户级配置，无需提权。${C_RESET}
 
 ${C_DIM}任务状态与停止范围:${C_RESET}
   启用任务使用 .<category>，禁用任务使用 .<category>.disabled；守护程序仅扫描启用文件。
@@ -1233,9 +1244,8 @@ pick_log_task() {
 #  交互式新增
 # ---------------------------------------------------------------
 interactive_add() {
-    local cat scope name
+    local cat name
     cat=$(pick_category "新增配置 - 选择分类") || return
-    scope=$(pick_scope "新增配置 - 选择位置") || return
 
     name=$(tui_inputbox "新增 $cat - 任务名称" "请输入任务名称（不留空）") || return
     [[ -z "$name" ]] && { tui_msgbox "提示" "名称不能为空"; return; }
@@ -1250,7 +1260,6 @@ interactive_add() {
             if tui_yesno "edging - systemd 检测" "若环境已存在 systemd，是否跳过启动该 edging 任务？\n（常见于容器/proot 环境）"; then
                 args+=(--no-systemd)
             fi
-            [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
         timer)
@@ -1265,7 +1274,6 @@ interactive_add() {
             command=$(tui_inputbox "timer - 执行命令" "请输入定时执行的命令") || return
             [[ -z "$command" ]] && { tui_msgbox "提示" "command 不能为空"; return; }
             local args=(add timer --name "$name" --schedule "$schedule" --command "$command")
-            [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
         slimy|shot)
@@ -1273,7 +1281,6 @@ interactive_add() {
             command=$(tui_inputbox "$cat - 执行命令" "请输入要执行的命令\n（slimy 会每 5 秒触发一次；shot 仅启动时执行一次）") || return
             [[ -z "$command" ]] && { tui_msgbox "提示" "command 不能为空"; return; }
             local args=(add "$cat" --name "$name" --command "$command")
-            [[ "$scope" == "system" ]] && args+=(--system)
             "$0" "${args[@]}"
             ;;
     esac
@@ -1285,7 +1292,7 @@ interactive_add() {
 #  交互式导入
 # ---------------------------------------------------------------
 interactive_import() {
-    local cat src name scope
+    local cat src name
     cat=$(pick_category "导入脚本 - 选择分类") || return
 
     src=$(tui_inputbox "导入 $cat - 文件路径" "请输入要导入的脚本文件路径") || return
@@ -1293,11 +1300,9 @@ interactive_import() {
 
     name=$(tui_inputbox "导入 $cat - 任务名称" "留空则使用文件名") || true
     [[ -z "$name" ]] && name=""
-    scope=$(pick_scope "导入 $cat - 选择位置") || return
 
     local args=(import "$cat" "$src")
     [[ -n "$name" ]] && args+=(--name "$name")
-    [[ "$scope" == "system" ]] && args+=(--system)
     "$0" "${args[@]}"
 
     tui_msgbox "完成" "操作结束，按回车返回主菜单"
@@ -1410,6 +1415,7 @@ interactive_list() {
     local mode filter_cat=""
     mode=$(tui_menu "列出任务" "请选择列出方式" "all" "列出所有分类" "filter" "按分类过滤") || return
     [[ "$mode" == "filter" ]] && filter_cat=$(pick_category "选择分类") || true
+    local last_sel=""
     while true; do
         local items=() cat scope d f n state sz mtime sel rest s_cat s_scope s_name s_file
         for cat in "${CATEGORIES[@]}"; do
@@ -1427,8 +1433,11 @@ interactive_list() {
             done
         done
         [[ ${#items[@]} -gt 0 ]] || { tui_msgbox "无任务" "当前没有可显示的任务配置"; return; }
+        _TUI_DEFAULT_ITEM="$last_sel"
         sel=$(tui_menu "任务列表" "共 $(( ${#items[@]} / 2 )) 项；选择任务查看详情和操作" "${items[@]}") || return
+        last_sel="$sel"
         s_cat="${sel%%|*}"; rest="${sel#*|}"; s_scope="${rest%%|*}"; s_name="${rest#*|}"
+        local last_action=""
         while true; do
             task_paths "$s_cat" "$s_name" "$s_scope"
             [[ -f "$TASK_ENABLED" ]] && s_file="$TASK_ENABLED" || s_file="$TASK_DISABLED"
@@ -1442,7 +1451,9 @@ interactive_list() {
                 menu_items+=("enable" "仅启用（改后缀）")
             fi
             menu_items+=("remove" "停止并删除" "back" "返回任务列表")
+            _TUI_DEFAULT_ITEM="$last_action"
             action=$(tui_menu "$s_cat / $s_name" "当前状态：$([[ -f "$TASK_ENABLED" ]] && echo 已启用 || echo 已禁用)" "${menu_items[@]}") || break
+            last_action="$action"
             [[ "$action" == "back" ]] && break
             if [[ "$action" == "view" ]]; then
                 _show_task_detail "$s_cat" "$s_scope" "$s_name" "$s_file"
@@ -1520,9 +1531,12 @@ _logs_browse() {
         return
     fi
 
+    local last_sel=""
     while true; do
         local sel
+        _TUI_DEFAULT_ITEM="$last_sel"
         sel=$(tui_menu "任务日志" "共 $(( ${#items[@]} / 2 )) 项  ↑↓ 选择  回车查看详情  ESC 返回" "${items[@]}") || return
+        last_sel="$sel"
 
         # 解析 sel: "cat|name"
         local s_cat s_name s_file
@@ -1535,13 +1549,16 @@ _logs_browse() {
 }
 
 interactive_logs() {
+    local last_sub=""
     while true; do
         local sub
+        _TUI_DEFAULT_ITEM="$last_sub"
         sub=$(tui_menu "日志管理" "请选择操作" \
             "browse" "浏览/查看日志" \
             "export" "导出日志" \
             "clear"  "清空所有日志" \
             "back"   "返回主菜单") || return
+        last_sub="$sub"
 
         case "$sub" in
             browse)
@@ -1576,9 +1593,11 @@ interactive_logs() {
 #  主菜单
 # ---------------------------------------------------------------
 interactive_menu() {
+    local last_choice=""
     while true; do
         _refresh_backtitle
         local choice
+        _TUI_DEFAULT_ITEM="$last_choice"
         choice=$(tui_menu "GXDE K9 Chocker — 主菜单" "↑↓ 移动  回车 确认  ESC 退出" \
             "list"    "浏览任务、详情与启停操作" \
             "add"     "新增配置" \
@@ -1591,6 +1610,7 @@ interactive_menu() {
             echo -e "${C_GREEN}${C_BOLD}再见！${C_RESET}"
             exit 0
         }
+        last_choice="$choice"
 
         case "$choice" in
             list)    interactive_list;;
