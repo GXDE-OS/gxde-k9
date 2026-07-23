@@ -1,3 +1,11 @@
+gxde-k9 (1.9.5) UNRELEASED; urgency=low
+
+  * Chocker TUI: make status text views return to the invoking menu instead of
+    exiting the application.
+  * Add AGENTS.md with project scripting and verification guidelines.
+
+ -- shenmo <shenmo@spark-app.store>  Thu, 23 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.4) UNRELEASED; urgency=low
 
   * Chocker TUI: add Ctrl+C quick exit with SIGINT trap and terminal restore.

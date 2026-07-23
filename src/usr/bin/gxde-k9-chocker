@@ -7,7 +7,7 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.9.4"
+VERSION="1.9.5"
 
 BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
 BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
