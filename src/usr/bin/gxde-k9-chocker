@@ -7,7 +7,7 @@ set -u
 
 # ===================== 基础变量 =====================
 PROG_NAME="gxde-k9-chocker"
-VERSION="1.9.2"
+VERSION="1.9.3"
 
 BASE_DIR_SYSTEM="${GXDE_K9_BASE_DIR_SYSTEM:-/usr/share/gxde-k9}"
 BASE_DIR_USER="${GXDE_K9_BASE_DIR_USER:-${HOME}/.local/share/GXDE/gxde-k9}"
@@ -358,12 +358,12 @@ ${C_DIM}用法:${C_RESET}
 ${C_DIM}子命令:${C_RESET}
   list       [--category <cat>] [--json]      ${C_GRAY}列出任务及启用状态${C_RESET}
   add        <category> [选项]                 ${C_GRAY}新增已启用任务${C_RESET}
-  start      <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启动已启用任务一次${C_RESET}
-  restart    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止后立即启动已启用任务${C_RESET}
-  stop       <category> <name> [--system|--user] [--yes] ${C_GRAY}仅停止关联进程，保留任务状态${C_RESET}
-  enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务（改后缀）${C_RESET}
-  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止关联进程并禁用任务${C_RESET}
-  remove     <category> <name> [--system|--user] [--yes] ${C_GRAY}停止并删除配置${C_RESET}
+  start      <category> <name> [--system|--user]       ${C_GRAY}仅启动已启用任务一次（无需提权）${C_RESET}
+  restart    <category> <name> [--system|--user]       ${C_GRAY}停止后立即启动已启用任务（无需提权）${C_RESET}
+  stop       <category> <name> [--system|--user]       ${C_GRAY}仅停止关联进程，保留任务状态（无需提权）${C_RESET}
+  enable     <category> <name> [--system|--user] [--yes] ${C_GRAY}仅启用任务（改后缀，系统级需提权）${C_RESET}
+  disable    <category> <name> [--system|--user] [--yes] ${C_GRAY}停止关联进程并禁用任务（系统级需提权）${C_RESET}
+  remove     <category> <name> [--system|--user] [--yes] ${C_GRAY}停止并删除配置（系统级需提权）${C_RESET}
   import     <category> <file> [--name N]     ${C_GRAY}从外部导入脚本${C_RESET}
   logs       <子命令> [...]                    ${C_GRAY}日志查看与导出${C_RESET}
   status     [<category> <name>] [--system|--user] ${C_GRAY}查看总览或任务状态${C_RESET}
@@ -374,9 +374,15 @@ ${C_DIM}分类:${C_RESET}
   $(for c in "${CATEGORIES[@]}"; do echo -n "$(tag_category "$c") "; done)
 
 ${C_DIM}通用选项:${C_RESET}
-  --system          操作系统级配置（/usr/share，需提权）
+  --system          操作系统级配置（/usr/share）
+  --user            操作用户级配置（默认）
   --yes             跳过交互确认（脚本调用）
   --json            JSON 输出（list 子命令）
+
+${C_DIM}提权说明:${C_RESET}
+  ${C_GRAY}system 指系统安装的用户态服务（配置位于 /usr/share/gxde-k9）。其中仅 enable/disable/remove${C_RESET}
+  ${C_GRAY}会修改系统配置文件，需提权；add/import 创建系统配置同样需提权。${C_RESET}
+  ${C_GRAY}start/stop/restart 为运行时操作，仅读取配置并管理进程，无需提权。${C_RESET}
 
 ${C_DIM}任务状态与停止范围:${C_RESET}
   启用任务使用 .<category>，禁用任务使用 .<category>.disabled；守护程序仅扫描启用文件。
@@ -509,9 +515,6 @@ stop_task_processes() {
 
 cmd_start() {
     parse_task_action "$@" || exit $?
-    elevate_task_action start; local elevated=$?
-    [[ $elevated -eq 0 ]] && return
-    [[ $elevated -eq 2 ]] && exit 1
     [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
     [[ ! -f "$TASK_DISABLED" ]] || { log.error "任务已禁用，请先执行 enable"; exit 1; }
@@ -541,9 +544,6 @@ cmd_start() {
 
 cmd_stop() {
     parse_task_action "$@" || exit $?
-    elevate_task_action stop; local elevated=$?
-    [[ $elevated -eq 0 ]] && return
-    [[ $elevated -eq 2 ]] && exit 1
     [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
     local task_file="$TASK_ENABLED"
@@ -558,9 +558,6 @@ cmd_stop() {
 
 cmd_restart() {
     parse_task_action "$@" || exit $?
-    elevate_task_action restart; local elevated=$?
-    [[ $elevated -eq 0 ]] && return
-    [[ $elevated -eq 2 ]] && exit 1
     [[ "$ACTION_CAT" != "timer" ]] || { log.error "timer 任务仅支持 enable 和 disable；由守护程序按计划扫描"; exit 2; }
     task_paths "$ACTION_CAT" "$ACTION_NAME" "$ACTION_SCOPE"
     [[ ! -f "$TASK_DISABLED" ]] || { log.error "任务已禁用，请先执行 enable"; exit 1; }

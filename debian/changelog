@@ -1,3 +1,13 @@
+gxde-k9 (1.9.3) UNRELEASED; urgency=low
+
+  * Chocker: start/stop/restart no longer require privilege escalation for
+    system-scope tasks; only enable/disable/remove (and add/import) modify
+    system config files and need sudo/pkexec.
+  * Update help text to clarify which operations require privilege escalation
+    and redefine "system" as user-space services installed system-wide.
+
+ -- shenmo <shenmo@spark-app.store>  Thu, 23 Jul 2026 00:00:00 +0800
+
 gxde-k9 (1.9.2) UNRELEASED; urgency=low
 
   * Fix: disable now kills running processes before renaming to .disabled
