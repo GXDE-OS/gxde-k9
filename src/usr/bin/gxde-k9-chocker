@@ -298,10 +298,11 @@ tui_textbox() {
     local h w
     read -r h w < <(_tui_size_full)
     if [[ "$TUI_BACKEND" == "dialog" ]]; then
-        dialog --backtitle "${_BACKTITLE}" --title "$title" --textbox "$file" "$h" "$w"
+        dialog --backtitle "${_BACKTITLE}" --title "$title" --exit-label "返回" --textbox "$file" "$h" "$w"
     else
-        whiptail --backtitle "${_BACKTITLE}" --title "$title" --scrolltext --textbox "$file" "$h" "$w"
+        whiptail --backtitle "${_BACKTITLE}" --title "$title" --exit-button "返回" --scrolltext --textbox "$file" "$h" "$w"
     fi
+    return 0
 }
 
 # 从 stdin 读取内容，剥离 ANSI 转义后用 textbox 展示
