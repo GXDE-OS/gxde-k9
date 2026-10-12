@@ -1,0 +1,27 @@
+# Maintainer: CharOfString <root@charofstring.cc>
+pkgname=gxde-k9-git
+pkgver=2.0.0
+pkgrel=1
+pkgdesc='GXDE user-space service runner and watchdog'
+arch=('any')
+url="https://github.com/GXDE-OS/gxde-k9"
+license=('LGPL-3.0-or-later')
+# gxde-k9-chocker 的交互菜单优先使用 whiptail ・ gxde-k9-chocker prefers whiptail for its TUI.
+depends=('bash' 'coreutils' 'libnewt')
+optdepends=('dialog: alternative TUI backend for gxde-k9-chocker')
+makedepends=('git')
+provides=("gxde-k9=$pkgver")
+conflicts=('gxde-k9')
+source=()
+sha512sums=()
+
+# 直接使用 PKGBUILD 所在的 git 仓库作为源码 ・ Build from the git checkout this PKGBUILD lives in.
+_srcroot() {
+  git -C "$startdir" rev-parse --show-toplevel
+}
+
+package() {
+  # 与 debian/install 相同，src/ 即为安装根目录 ・ Same as debian/install, src/ is the install root.
+  cp -r --no-preserve=ownership "$(_srcroot)/src/." "$pkgdir/"
+  find "$pkgdir" -name .keep -delete
+}
