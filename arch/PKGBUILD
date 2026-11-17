@@ -1,5 +1,5 @@
 # Maintainer: CharOfString <root@charofstring.cc>
-pkgname=gxde-k9-git
+pkgname=gxde-k9
 pkgver=2.0.0
 pkgrel=1
 pkgdesc='GXDE user-space service runner and watchdog'
@@ -10,8 +10,9 @@ license=('LGPL-3.0-or-later')
 depends=('bash' 'coreutils' 'libnewt')
 optdepends=('dialog: alternative TUI backend for gxde-k9-chocker')
 makedepends=('git')
-provides=("gxde-k9=$pkgver")
-conflicts=('gxde-k9')
+provides=("gxde-k9-git=$pkgver")
+conflicts=('gxde-k9-git')
+replaces=('gxde-k9-git')
 source=()
 sha512sums=()
 
